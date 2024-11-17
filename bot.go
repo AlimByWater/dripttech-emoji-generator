@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 	"github.com/cavaliergopher/grab/v3"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Bot struct {

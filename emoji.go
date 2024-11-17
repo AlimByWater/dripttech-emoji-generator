@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 	"log"
 	"log/slog"
 	"os"
@@ -127,19 +127,26 @@ func (b *Bot) addEmojis(ctx context.Context, args *EmojiCommand, emojiFiles []st
 	var updstickers []tgbotapi.UploadStickerConfig
 
 	for _, emojiFile := range emojiFiles {
-		file := tgbotapi.FilePath(emojiFile)
-		fmt.Println(emojiFile)
+		openFile, err := os.ReadFile(emojiFile)
+		if err != nil {
+			slog.LogAttrs(ctx, slog.LevelError, "open file", args.ToSlogAttributes(slog.String("err", err.Error()))...)
+			return nil, fmt.Errorf("open file: %w", err)
+		}
+
+		file := tgbotapi.FileBytes{Bytes: openFile}
 
 		updsticker := tgbotapi.UploadStickerConfig{
 			UserID:        args.UserID,
-			Sticker:       tgbotapi.RequestFile{Name: emojiFile, Data: file},
+			Sticker:       tgbotapi.RequestFile{Data: file},
 			StickerFormat: "video",
 		}
 		updstickers = append(updstickers, updsticker)
+
 	}
 
 	for _, updsticker := range updstickers {
 		resp, err := b.api.Request(updsticker)
+		slog.Info("upload sticker resp", slog.String("resp", fmt.Sprintf("%v", resp)))
 		if err != nil {
 			slog.LogAttrs(ctx, slog.LevelError, "upload sticker", args.ToSlogAttributes(slog.String("err", err.Error()))...)
 			if errors.Is(err, tgbotapi.Error{}) {
@@ -161,6 +168,7 @@ func (b *Bot) addEmojis(ctx context.Context, args *EmojiCommand, emojiFiles []st
 			sticker := tgbotapi.InputSticker{
 				EmojiList: []string{"🎥"},
 				Sticker:   tgbotapi.RequestFile{Name: uploadedSticker.FileID, Data: tgbotapi.FileID(uploadedSticker.FileID)},
+				Format:    "video",
 			}
 			stickers = append(stickers, sticker)
 		}
@@ -168,12 +176,11 @@ func (b *Bot) addEmojis(ctx context.Context, args *EmojiCommand, emojiFiles []st
 
 	if args.newSet {
 		addConfig := tgbotapi.NewStickerSetConfig{
-			UserID:        args.UserID,
-			Name:          args.PackLink,
-			Title:         args.SetName,
-			StickerFormat: "video",
-			StickerType:   "custom_emoji",
-			Stickers:      stickers[:1],
+			UserID:      args.UserID,
+			Name:        args.PackLink,
+			Title:       args.SetName,
+			StickerType: "custom_emoji",
+			Stickers:    stickers[:1],
 		}
 		_, err := b.Request(addConfig)
 		if err != nil {
