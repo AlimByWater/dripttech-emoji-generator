@@ -2,8 +2,9 @@ package main
 
 import (
 	"errors"
-	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 	"log/slog"
+
+	"github.com/go-telegram/bot/models"
 )
 
 var (
@@ -42,7 +43,7 @@ type EmojiCommand struct {
 	BackgroundColor string
 	UserID          int64
 	DownloadedFile  string
-	File            tgbotapi.File
+	File            *models.File
 
 	Iphone bool
 
@@ -68,4 +69,69 @@ func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {
 	a = append(a, attrs...)
 
 	return a
+}
+
+var argAlias = map[string]string{
+	// width aliases
+	"width":  "width",
+	"w":      "width",
+	"ширина": "width",
+	"ш":      "width",
+
+	// name aliases
+	"name": "name",
+	"n":    "name",
+	"имя":  "name",
+	"и":    "name",
+
+	// background aliases
+	"background": "background",
+	"bg":         "background",
+	"b":          "background",
+	"фон":        "background",
+	"ф":          "background",
+
+	// link aliases
+	"link":   "link",
+	"l":      "link",
+	"ссылка": "link",
+	"с":      "link",
+
+	// iphone aliases
+	"iphone": "iphone",
+	"ip":     "iphone",
+	"айфон":  "iphone",
+	"а":      "iphone",
+}
+
+var colorMap = map[string]string{
+	"black":   "0x000000",
+	"white":   "0xFFFFFF",
+	"red":     "0xFF0000",
+	"green":   "0x00FF00",
+	"blue":    "0x0000FF",
+	"yellow":  "0xFFFF00",
+	"cyan":    "0x00FFFF",
+	"magenta": "0xFF00FF",
+	"gray":    "0x808080",
+	"purple":  "0x800080",
+	"orange":  "0xFFA500",
+	"brown":   "0x8B4513",
+	"pink":    "0xFFC0CB",
+
+	"черный":     "0x000000",
+	"белый":      "0xFFFFFF",
+	"красный":    "0xFF0000",
+	"зеленый":    "0x00FF00",
+	"зелёный":    "0x00FF00",
+	"синий":      "0x0000FF",
+	"желтый":     "0xFFFF00",
+	"жёлтый":     "0xFFFF00",
+	"голубой":    "0x00FFFF",
+	"пурпурный":  "0xFF00FF",
+	"серый":      "0x808080",
+	"фиолетовый": "0x800080",
+	"оранжевый":  "0xFFA500",
+	"коричневый": "0x8B4513",
+	"розовый":    "0xFFC0CB",
 }

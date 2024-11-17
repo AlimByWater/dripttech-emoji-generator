@@ -7,6 +7,7 @@ require (
 	github.com/cavaliergopher/grab/v3 v3.0.1
 	github.com/celestix/gotgproto v1.0.0-beta18
 	github.com/glebarez/sqlite v1.10.0
+	github.com/go-telegram/bot v1.10.1
 	github.com/gotd/td v0.102.0
 	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.9.0
@@ -50,3 +51,5 @@ require (
 	nhooyr.io/websocket v1.8.11 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
+
+replace github.com/go-telegram/bot => ./pkg/bot-main
