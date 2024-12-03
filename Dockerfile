@@ -31,10 +31,10 @@ COPY --from=builder /app/dripttech-emoji-generator /app/dripttech-emoji-generato
 COPY --from=builder /app/.env /app/.env
 
 # Create necessary directories
-RUN mkdir -p /app/session
-RUN mkdir -p /app/session/user
-RUN mkdir -p session
-RUN mkdir -p session/user
+COPY --from=builder  /app/session /app/session
+COPY --from=builder  /app/session/user /app/session/user
+COPY --from=builder  session session
+COPY --from=builder  session/user session/user
 RUN mkdir -p /app/tmp
 
 
