@@ -13,7 +13,7 @@ RUN go mod download
 
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o app .
+RUN CGO_ENABLED=0 GOOS=linux go build -o dripttech-emoji-generator .
 
 # Create final lightweight image
 FROM alpine:latest
@@ -27,18 +27,17 @@ RUN apk upgrade
 RUN apk add --no-cache ca-certificates ffmpeg
 
 # Copy the binary from builder
-COPY --from=builder /app/app .
-COPY --from=builder /app/.env .
-COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/dripttech-emoji-generator /app/dripttech-emoji-generator
+COPY --from=builder /app/.env /app/.env
 
 # Create necessary directories
 RUN mkdir -p /app/session
+RUN mkdir -p /app/session/user
 RUN mkdir -p session
+RUN mkdir -p session/user
 RUN mkdir -p /app/tmp
 
-# Set executable permissions
-RUN chmod +x /app
 
 EXPOSE 8080
 
-CMD ["./app"]
+CMD ["/app/dripttech-emoji-generator"]
