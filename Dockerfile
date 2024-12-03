@@ -33,8 +33,8 @@ COPY --from=builder /app/.env /app/.env
 # Create necessary directories
 COPY --from=builder  /app/session /app/session
 COPY --from=builder  /app/session/user /app/session/user
-COPY --from=builder  session session
-COPY --from=builder  session/user session/user
+COPY --from=builder  /app/session session
+COPY --from=builder  /app/session/user session/user
 RUN mkdir -p /app/tmp
 
 
