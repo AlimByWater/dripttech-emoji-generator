@@ -590,383 +590,276 @@ func uploadSticker(ctx context.Context, b *bot.Bot, userID int64, filename strin
 }
 
 func addEmojis(ctx context.Context, b *bot.Bot, args *EmojiCommand, emojiFiles []string) (*models.StickerSet, error) {
-	if len(emojiFiles) == 0 {
-		return nil, fmt.Errorf("нет файлов для создания набора")
+	if err := validateEmojiFiles(emojiFiles); err != nil {
+		return nil, err
 	}
 
-	if len(emojiFiles) > maxStickersTotal {
-		return nil, fmt.Errorf("слишком много файлов для создания набора (максимум %d)", maxStickersTotal)
+	// Подготавливаем прозрачные стикеры если нужно
+	transparentData, err := prepareTransparentData(args.Width)
+	if err != nil {
+		return nil, err
 	}
 
-	// Подготавливаем прозрачные стикеры для существующего набора
-	transparentSpacing := defaultWidth - args.Width
-	var transparentData []byte
-	if transparentSpacing > 0 {
-		var err error
-		transparentData, err = os.ReadFile("transparent.webm")
-		if err != nil {
-			return nil, fmt.Errorf("open transparent file: %w", err)
-		}
+	// Загружаем все эмодзи стикеры
+	emojiFileIDs, err := uploadEmojiFiles(ctx, b, args, emojiFiles)
+	if err != nil {
+		return nil, err
 	}
 
 	if args.newSet {
-		totalEmojis := len(emojiFiles)
-		rows := (totalEmojis + args.Width - 1) / args.Width
-		totalWithTransparent := rows * defaultWidth
-		slog.Debug("addEmojis",
-			slog.Int("totalemojis", totalEmojis),
-			slog.Int("rows", rows),
-			slog.Int("width", args.Width),
-			slog.Int("transparent_spacing", transparentSpacing),
-			slog.Int("totalWithTransparent", totalWithTransparent))
-
-		if totalWithTransparent > maxStickersTotal {
-			return nil, fmt.Errorf("общее количество стикеров (%d) с прозрачными превышает максимум (%d)", totalWithTransparent, maxStickersTotal)
-		}
-
-		// Сначала загрузим все эмодзи стикеры
-		slog.Debug("uploading emoji stickers", slog.Int("count", len(emojiFiles)))
-		emojiFileIDs := make([]string, len(emojiFiles))
-		for i, emojiFile := range emojiFiles {
-			fileData, err := os.ReadFile(emojiFile)
-			if err != nil {
-				return nil, fmt.Errorf("open emoji file: %w", err)
-			}
-
-			fileID, err := uploadSticker(ctx, b, args.UserID, emojiFile, fileData)
-			if err != nil {
-				return nil, err
-			}
-			emojiFileIDs[i] = fileID
-
-			// Небольшая задержка между загрузками
-			time.Sleep(time.Millisecond * 200)
-		}
-
-		// Создаем новый набор стикеров
-		inputStickers := make([]models.InputSticker, 0, totalWithTransparent)
-		emojiIndex := 0
-
-		if transparentSpacing > 0 {
-			leftPadding := transparentSpacing / 2
-			rightPadding := transparentSpacing - leftPadding
-
-			for emojiIndex < len(emojiFileIDs) {
-				pos := emojiIndex % args.Width
-
-				// Добавляем левые прозрачные стикеры в начале строки
-				if pos == 0 {
-					for i := 0; i < leftPadding; i++ {
-						transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
-						if err != nil {
-							return nil, fmt.Errorf("upload transparent sticker: %w", err)
-						}
-
-						inputStickers = append(inputStickers, models.InputSticker{
-							Sticker:   &models.InputFileString{Data: transparentFileID},
-							Format:    defaultStickerFormat,
-							EmojiList: []string{defaultEmojiIcon},
-						})
-						time.Sleep(time.Millisecond * 200)
-					}
-				}
-
-				// Добавляем эмодзи
-				inputStickers = append(inputStickers, models.InputSticker{
-					Sticker:   &models.InputFileString{Data: emojiFileIDs[emojiIndex]},
-					Format:    defaultStickerFormat,
-					EmojiList: []string{defaultEmojiIcon},
-				})
-				emojiIndex++
-
-				// Добавляем правые прозрачные стикеры в конце строки
-				if pos == args.Width-1 || emojiIndex == len(emojiFileIDs) {
-					for i := 0; i < rightPadding; i++ {
-						transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
-						if err != nil {
-							return nil, fmt.Errorf("upload transparent sticker: %w", err)
-						}
-
-						inputStickers = append(inputStickers, models.InputSticker{
-							Sticker:   &models.InputFileString{Data: transparentFileID},
-							Format:    defaultStickerFormat,
-							EmojiList: []string{defaultEmojiIcon},
-						})
-						time.Sleep(time.Millisecond * 200)
-					}
-				}
-			}
-		} else {
-			// Когда не нужны прозрачные стикеры, просто добавляем все эмодзи
-			for _, fileID := range emojiFileIDs {
-				inputStickers = append(inputStickers, models.InputSticker{
-					Sticker:   &models.InputFileString{Data: fileID},
-					Format:    defaultStickerFormat,
-					EmojiList: []string{defaultEmojiIcon},
-				})
-			}
-		}
-
-		// Создаем новый набор стикеров с первыми 50 стикерами
-		idx := len(inputStickers)
-		if idx > maxStickersInBatch {
-			idx = maxStickersInBatch
-		}
-
-		var stickerSet *models.StickerSet
-		for {
-			ok, err := b.CreateNewStickerSet(ctx, &bot.CreateNewStickerSetParams{
-				UserID:      args.UserID,
-				Name:        args.PackLink,
-				Title:       args.SetName,
-				StickerType: "custom_emoji",
-				Stickers:    inputStickers[:idx],
-			})
-
-			if err != nil {
-				slog.Debug("new sticker set FAILED", slog.String("name", args.PackLink), slog.String("err", err.Error()))
-			} else {
-				slog.Debug("new sticker set SUCCESS", slog.String("name", args.PackLink), slog.Bool("ok", ok))
-			}
-
-			if waitTime, err := handleTelegramError(err); err != nil {
-				return nil, fmt.Errorf("create sticker set: %w", err)
-			} else if waitTime > 0 {
-				slog.Info("waiting before retry", "seconds", waitTime)
-				time.Sleep(time.Duration(waitTime) * time.Second)
-				continue
-			}
-			break
-		}
-
-		// Добавляем оставшиеся стикеры по одному
-		if len(inputStickers) > maxStickersInBatch {
-			remaining := len(inputStickers) - maxStickersInBatch
-			slog.Debug("adding remaining stickers",
-				slog.Int("from", maxStickersInBatch),
-				slog.Int("remaining", remaining),
-				slog.Int("total", len(inputStickers)))
-
-			for i := maxStickersInBatch; i < len(inputStickers); i++ {
-				sticker := inputStickers[i]
-				slog.Debug("adding sticker",
-					slog.Int("index", i),
-					slog.Int("progress", i-maxStickersInBatch+1),
-					slog.Int("total_remaining", remaining))
-
-				for {
-					_, err := b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
-						UserID:  args.UserID,
-						Name:    args.PackLink,
-						Sticker: sticker,
-					})
-
-					if err != nil {
-						slog.Debug("add sticker FAILED",
-							slog.String("name", args.PackLink),
-							slog.Int("index", i),
-							slog.String("err", err.Error()))
-					} else {
-						slog.Debug("add sticker SUCCESS",
-							slog.String("name", args.PackLink),
-							slog.Int("index", i))
-					}
-
-					if waitTime, err := handleTelegramError(err); err != nil {
-						return nil, fmt.Errorf("add sticker to set: %w", err)
-					} else if waitTime > 0 {
-						slog.Info("waiting before retry", "seconds", waitTime)
-						time.Sleep(time.Duration(waitTime) * time.Second)
-						continue
-					}
-					break
-				}
-			}
-		}
-
-		// Получаем финальное состояние набора
-		for {
-			set, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
-				Name: args.PackLink,
-			})
-			if err != nil {
-				if waitTime, err := handleTelegramError(err); err != nil {
-					return nil, fmt.Errorf("get sticker set: %w", err)
-				} else if waitTime > 0 {
-					slog.Info("waiting before retry", "seconds", waitTime)
-					time.Sleep(time.Duration(waitTime) * time.Second)
-					continue
-				}
-				return nil, fmt.Errorf("get sticker set: %w", err)
-			}
-			stickerSet = set
-			break
-		}
-
-		return stickerSet, nil
+		return createNewStickerSet(ctx, b, args, emojiFileIDs, transparentData)
 	}
 
-	////////////////////////////////////////////////////////////////////////////////////
-	// Для существующего набора
-	if !args.newSet {
-		// Сначала загрузим все эмодзи стикеры
-		slog.Debug("uploading emoji stickers", slog.Int("count", len(emojiFiles)))
-		emojiFileIDs := make([]string, len(emojiFiles))
-		for i, emojiFile := range emojiFiles {
-			fileData, err := os.ReadFile(emojiFile)
-			if err != nil {
-				return nil, fmt.Errorf("open emoji file: %w", err)
-			}
+	return addToExistingStickerSet(ctx, b, args, emojiFileIDs)
+}
 
-			fileID, err := uploadSticker(ctx, b, args.UserID, emojiFile, fileData)
-			if err != nil {
-				return nil, err
-			}
-			emojiFileIDs[i] = fileID
+// validateEmojiFiles проверяет корректность входных файлов
+func validateEmojiFiles(emojiFiles []string) error {
+	if len(emojiFiles) == 0 {
+		return fmt.Errorf("нет файлов для создания набора")
+	}
 
-			// Небольшая задержка между загрузками
-			time.Sleep(time.Millisecond * 200)
-		}
+	if len(emojiFiles) > maxStickersTotal {
+		return fmt.Errorf("слишком много файлов для создания набора (максимум %d)", maxStickersTotal)
+	}
 
-		// Получаем текущее состояние набора стикеров один раз в начале
-		currentSet, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
-			Name: args.PackLink,
-		})
+	return nil
+}
+
+// prepareTransparentData подготавливает данные прозрачного стикера если нужно
+func prepareTransparentData(width int) ([]byte, error) {
+	transparentSpacing := defaultWidth - width
+	if transparentSpacing <= 0 {
+		return nil, nil
+	}
+
+	transparentData, err := os.ReadFile("transparent.webm")
+	if err != nil {
+		return nil, fmt.Errorf("open transparent file: %w", err)
+	}
+
+	return transparentData, nil
+}
+
+// uploadEmojiFiles загружает все файлы эмодзи и возвращает их fileIDs
+func uploadEmojiFiles(ctx context.Context, b *bot.Bot, args *EmojiCommand, emojiFiles []string) ([]string, error) {
+	slog.Debug("uploading emoji stickers", slog.Int("count", len(emojiFiles)))
+	emojiFileIDs := make([]string, len(emojiFiles))
+
+	for i, emojiFile := range emojiFiles {
+		fileData, err := os.ReadFile(emojiFile)
 		if err != nil {
-			return nil, fmt.Errorf("get current sticker set: %w", err)
+			return nil, fmt.Errorf("open emoji file: %w", err)
 		}
 
-		// Вычисляем количество прозрачных стикеров слева и справа
+		fileID, err := uploadSticker(ctx, b, args.UserID, emojiFile, fileData)
+		if err != nil {
+			return nil, err
+		}
+		emojiFileIDs[i] = fileID
+
+		time.Sleep(time.Millisecond * 200)
+	}
+
+	return emojiFileIDs, nil
+}
+
+// createNewStickerSet создает новый набор стикеров с прозрачными разделителями
+func createNewStickerSet(ctx context.Context, b *bot.Bot, args *EmojiCommand, emojiFileIDs []string, transparentData []byte) (*models.StickerSet, error) {
+	totalEmojis := len(emojiFileIDs)
+	rows := (totalEmojis + args.Width - 1) / args.Width
+	totalWithTransparent := rows * defaultWidth
+
+	slog.Debug("addEmojis",
+		slog.Int("totalemojis", totalEmojis),
+		slog.Int("rows", rows),
+		slog.Int("width", args.Width),
+		slog.Int("transparent_spacing", defaultWidth-args.Width),
+		slog.Int("totalWithTransparent", totalWithTransparent))
+
+	if totalWithTransparent > maxStickersTotal {
+		return nil, fmt.Errorf("общее количество стикеров (%d) с прозрачными превышает максимум (%d)", totalWithTransparent, maxStickersTotal)
+	}
+
+	inputStickers := prepareInputStickers(ctx, b, args, emojiFileIDs, transparentData)
+	for _, inputSticker := range inputStickers {
+		fmt.Print(inputSticker.Sticker)
+	}
+	return createStickerSetWithBatches(ctx, b, args, inputStickers)
+}
+
+// prepareInputStickers подготавливает список стикеров с учетом прозрачных разделителей
+func prepareInputStickers(ctx context.Context, b *bot.Bot, args *EmojiCommand, emojiFileIDs []string, transparentData []byte) []models.InputSticker {
+	transparentSpacing := defaultWidth - args.Width
+	inputStickers := make([]models.InputSticker, 0, len(emojiFileIDs)*(1+transparentSpacing))
+
+	if transparentSpacing > 0 {
 		leftPadding := transparentSpacing / 2
 		rightPadding := transparentSpacing - leftPadding
 
-		// Отслеживаем текущую позицию локально
-		currentPosition := len(currentSet.Stickers)
-		emojiIndex := 0
-
-		for emojiIndex < len(emojiFileIDs) {
-			pos := currentPosition % defaultWidth
+		for emojiIndex := 0; emojiIndex < len(emojiFileIDs); emojiIndex++ {
+			pos := emojiIndex % args.Width
 
 			// Добавляем левые прозрачные стикеры в начале строки
-			if pos == 0 && transparentSpacing > 0 {
-				for i := 0; i < leftPadding; i++ {
-					transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
-					if err != nil {
-						return nil, fmt.Errorf("upload transparent sticker: %w", err)
-					}
-
-					inputSticker := models.InputSticker{
-						Sticker:   &models.InputFileString{Data: transparentFileID},
-						Format:    defaultStickerFormat,
-						EmojiList: []string{defaultEmojiIcon},
-					}
-
-					for {
-						_, err = b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
-							UserID:  args.UserID,
-							Name:    args.PackLink,
-							Sticker: inputSticker,
-						})
-
-						if err != nil {
-							if waitTime, retryErr := handleTelegramError(err); retryErr != nil {
-								return nil, fmt.Errorf("add transparent sticker: %w", retryErr)
-							} else if waitTime > 0 {
-								slog.Info("waiting before retry", "seconds", waitTime)
-								time.Sleep(time.Duration(waitTime) * time.Second)
-								continue
-							}
-							return nil, fmt.Errorf("add transparent sticker: %w", err)
-						}
-						break
-					}
-					time.Sleep(time.Millisecond * 200)
-					currentPosition++
-				}
+			if pos == 0 {
+				inputStickers = append(inputStickers, createTransparentStickers(ctx, b, args, transparentData, leftPadding)...)
 			}
 
 			// Добавляем эмодзи
-			inputSticker := models.InputSticker{
+			inputStickers = append(inputStickers, models.InputSticker{
 				Sticker:   &models.InputFileString{Data: emojiFileIDs[emojiIndex]},
 				Format:    defaultStickerFormat,
 				EmojiList: []string{defaultEmojiIcon},
-			}
+			})
 
-			for {
-				_, err = b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
-					UserID:  args.UserID,
-					Name:    args.PackLink,
-					Sticker: inputSticker,
-				})
-
-				if err != nil {
-					if waitTime, retryErr := handleTelegramError(err); retryErr != nil {
-						return nil, fmt.Errorf("add emoji sticker: %w", retryErr)
-					} else if waitTime > 0 {
-						slog.Info("waiting before retry", "seconds", waitTime)
-						time.Sleep(time.Duration(waitTime) * time.Second)
-						continue
-					}
-					return nil, fmt.Errorf("add emoji sticker: %w", err)
-				}
-				break
-			}
-			time.Sleep(time.Millisecond * 200)
-			currentPosition++
-			emojiIndex++
-
-			// Проверяем, нужно ли добавить правые прозрачные стикеры
-			pos = currentPosition % defaultWidth
-			if pos == args.Width && transparentSpacing > 0 {
-				for i := 0; i < rightPadding; i++ {
-					transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
-					if err != nil {
-						return nil, fmt.Errorf("upload transparent sticker: %w", err)
-					}
-
-					inputSticker := models.InputSticker{
-						Sticker:   &models.InputFileString{Data: transparentFileID},
-						Format:    defaultStickerFormat,
-						EmojiList: []string{defaultEmojiIcon},
-					}
-
-					for {
-						_, err = b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
-							UserID:  args.UserID,
-							Name:    args.PackLink,
-							Sticker: inputSticker,
-						})
-
-						if err != nil {
-							if waitTime, retryErr := handleTelegramError(err); retryErr != nil {
-								return nil, fmt.Errorf("add transparent sticker: %w", retryErr)
-							} else if waitTime > 0 {
-								slog.Info("waiting before retry", "seconds", waitTime)
-								time.Sleep(time.Duration(waitTime) * time.Second)
-								continue
-							}
-							return nil, fmt.Errorf("add transparent sticker: %w", err)
-						}
-						break
-					}
-					time.Sleep(time.Millisecond * 200)
-					currentPosition++
-				}
+			// Добавляем правые прозрачные стикеры в конце строки
+			if pos == args.Width-1 || emojiIndex == len(emojiFileIDs)-1 {
+				inputStickers = append(inputStickers, createTransparentStickers(ctx, b, args, transparentData, rightPadding)...)
 			}
 		}
-
-		// Получаем финальное состояние набора
-		finalSet, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
-			Name: args.PackLink,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("get final sticker set: %w", err)
+	} else {
+		// Когда не нужны прозрачные стикеры, просто добавляем все эмодзи
+		for _, fileID := range emojiFileIDs {
+			inputStickers = append(inputStickers, models.InputSticker{
+				Sticker:   &models.InputFileString{Data: fileID},
+				Format:    defaultStickerFormat,
+				EmojiList: []string{defaultEmojiIcon},
+			})
 		}
-
-		return finalSet, nil
 	}
 
-	return nil, fmt.Errorf("unknown sticker set type")
+	return inputStickers
+}
+
+// createTransparentStickers создает указанное количество прозрачных стикеров
+func createTransparentStickers(ctx context.Context, b *bot.Bot, args *EmojiCommand, transparentData []byte, count int) []models.InputSticker {
+	stickers := make([]models.InputSticker, 0, count)
+
+	for i := 0; i < count; i++ {
+		transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
+		if err != nil {
+			slog.Error("failed to upload transparent sticker", slog.String("error", err.Error()))
+			continue
+		}
+
+		stickers = append(stickers, models.InputSticker{
+			Sticker:   &models.InputFileString{Data: transparentFileID},
+			Format:    defaultStickerFormat,
+			EmojiList: []string{defaultEmojiIcon},
+		})
+		time.Sleep(time.Millisecond * 200)
+	}
+
+	return stickers
+}
+
+// createStickerSetWithBatches создает набор стикеров с поддержкой батчей
+func createStickerSetWithBatches(ctx context.Context, b *bot.Bot, args *EmojiCommand, inputStickers []models.InputSticker) (*models.StickerSet, error) {
+	// Создаем новый набор стикеров с первым стикером
+
+	count := len(inputStickers)
+	if count > maxStickersInBatch {
+		count = maxStickersInBatch
+	}
+
+	ok, err := b.CreateNewStickerSet(ctx, &bot.CreateNewStickerSetParams{
+		UserID:      args.UserID,
+		Name:        args.PackLink,
+		Title:       args.SetName,
+		StickerType: "custom_emoji",
+		Stickers:    inputStickers[:count],
+	})
+	if err != nil {
+		slog.Debug("new sticker set FAILED", slog.String("name", args.PackLink), slog.String("error", err.Error()))
+		return nil, fmt.Errorf("create sticker set: %w", err)
+	}
+
+	if !ok {
+		return nil, fmt.Errorf("failed to create sticker set")
+	}
+
+	inputStickers = inputStickers[count:]
+
+	// Добавляем оставшиеся стикеры по одному
+	for i := 1; i < len(inputStickers); i++ {
+		ok, err := b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
+			UserID:  args.UserID,
+			Name:    args.PackLink,
+			Sticker: inputStickers[i],
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("add sticker to set: %w", err)
+		}
+
+		if !ok {
+			return nil, fmt.Errorf("failed to add sticker to set")
+		}
+
+		time.Sleep(time.Millisecond * 200)
+	}
+
+	// Получаем финальное состояние набора
+	set, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
+		Name: args.PackLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get sticker set: %w", err)
+	}
+
+	return set, nil
+}
+
+// addToExistingStickerSet добавляет эмодзи в существующий набор
+func addToExistingStickerSet(ctx context.Context, b *bot.Bot, args *EmojiCommand, emojiFileIDs []string) (*models.StickerSet, error) {
+	// Получаем текущий набор стикеров
+	currentSet, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
+		Name: args.PackLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get existing sticker set: %w", err)
+	}
+
+	// Проверяем, не превысим ли лимит
+	if len(currentSet.Stickers)+len(emojiFileIDs) > maxStickersTotal {
+		return nil, fmt.Errorf("общее количество стикеров (%d) превысит максимум (%d)",
+			len(currentSet.Stickers)+len(emojiFileIDs), maxStickersTotal)
+	}
+
+	// Добавляем каждый стикер по отдельности
+	for i, fileID := range emojiFileIDs {
+		inputSticker := models.InputSticker{
+			Sticker:   &models.InputFileString{Data: fileID},
+			Format:    defaultStickerFormat,
+			EmojiList: []string{defaultEmojiIcon},
+		}
+
+		ok, err := b.AddStickerToSet(ctx, &bot.AddStickerToSetParams{
+			UserID:  args.UserID,
+			Name:    args.PackLink,
+			Sticker: inputSticker,
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("add sticker to existing set (sticker %d): %w", i+1, err)
+		}
+
+		if !ok {
+			return nil, fmt.Errorf("failed to add sticker %d to existing set", i+1)
+		}
+
+		time.Sleep(time.Millisecond * 200)
+	}
+
+	// Получаем обновленный набор стикеров
+	updatedSet, err := b.GetStickerSet(ctx, &bot.GetStickerSetParams{
+		Name: args.PackLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get updated sticker set: %w", err)
+	}
+
+	return updatedSet, nil
 }
 
 func ColorToHex(colorName string) string {
