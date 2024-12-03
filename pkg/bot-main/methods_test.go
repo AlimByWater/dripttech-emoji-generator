@@ -120,7 +120,7 @@ func TestBot_Methods(t *testing.T) {
 		assertTrue(t, resp)
 	})
 
-	t.Run("SendMessage", func(t *testing.T) {
+	t.Run("SendMessageWithEmojis", func(t *testing.T) {
 		c := &httpClient{t: t, resp: `{"text":"bar"}`, reqFields: map[string]string{
 			"text": "foo",
 		}}

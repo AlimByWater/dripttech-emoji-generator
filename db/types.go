@@ -11,6 +11,7 @@ type EmojiPack struct {
 	InitialCommand *string   `db:"initial_command"`
 	BotName        string    `db:"bot_name"`
 	EmojiCount     int       `db:"emoji_count"`
+	Completed      bool      `db:"completed"`
 	CreatedAt      time.Time `db:"created_at"`
 	UpdatedAt      time.Time `db:"updated_at"`
 }

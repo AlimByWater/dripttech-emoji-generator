@@ -79,7 +79,37 @@ func (u *User) Init(ctx context.Context) error {
 	return nil
 }
 
-func (u *User) SendMessage(ctx context.Context, chatID string, width int, msg bot.SendMessageParams) error {
+func (u *User) SendMessage(ctx context.Context, chatID string, msg bot.SendMessageParams) error {
+	sender := message.NewSender(tg.NewClient(u.client))
+
+	id, ok := u.chatIdsToInternalIds.Load(chatID)
+	if !ok {
+		return fmt.Errorf("id не найден доступ к чату %s", chatID)
+	}
+
+	ah, ok := u.accessHash.Load(id)
+	if !ok {
+		return fmt.Errorf("ah не найден доступ к чату %s", chatID)
+	}
+	peer := &tg.InputPeerChannel{
+		ChannelID:  id.(int64),
+		AccessHash: ah.(int64),
+	}
+
+	var formats []message.StyledTextOption
+	formats = append(formats,
+		styling.Plain(msg.Text),
+		styling.Plain("\n"))
+
+	_, err := sender.To(peer).SendAs(peer).Reply(msg.ReplyParameters.MessageID).StyledText(ctx, formats...)
+	if err != nil {
+		return fmt.Errorf("ошибка отправки сообщения: %v", err)
+	}
+
+	return nil
+}
+
+func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width int, msg bot.SendMessageParams) error {
 	sender := message.NewSender(tg.NewClient(u.client))
 
 	id, ok := u.chatIdsToInternalIds.Load(chatID)
