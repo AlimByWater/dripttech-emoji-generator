@@ -109,7 +109,7 @@ func (u *User) SendMessage(ctx context.Context, chatID string, msg bot.SendMessa
 	return nil
 }
 
-func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width int, msg bot.SendMessageParams) error {
+func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width int, packLink string, command string, msg bot.SendMessageParams) error {
 	sender := message.NewSender(tg.NewClient(u.client))
 
 	id, ok := u.chatIdsToInternalIds.Load(chatID)
@@ -127,7 +127,11 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 	}
 
 	var formats []message.StyledTextOption
+
 	for i, entity := range msg.Entities {
+		if i == len(msg.Entities)-1 {
+			break
+		}
 		switch entity.Type {
 		case "custom_emoji":
 			documentID, err := strconv.ParseInt(entity.CustomEmojiID, 10, 64)
@@ -141,8 +145,14 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 		}
 	}
 
+	formats = append(formats,
+		styling.Plain("\t"),
+		styling.TextURL("⁂добавить", fmt.Sprintf("https://t.me/addemoji/%s", packLink)),
+		styling.Plain("\n\t\t\t\t"), styling.Code(command),
+	)
+
 	//_, err := sender.To(peer).SendAs(channel).ReplyMsg(msgc).StyledText(ctx, formats...)
-	_, err := sender.To(peer).SendAs(peer).Reply(msg.ReplyParameters.MessageID).StyledText(ctx, formats...)
+	_, err := sender.To(peer).SendAs(peer).Reply(msg.ReplyParameters.MessageID).NoWebpage().StyledText(ctx, formats...)
 	if err != nil {
 		return fmt.Errorf("ошибка отправки сообщения: %v", err)
 	}
@@ -157,8 +167,8 @@ func (u *User) Shutdown(ctx context.Context) {
 }
 
 func (u *User) echo(ctx *ext.Context, update *ext.Update) error {
-	//slog.Info("new access hash", update.EffectiveUser().Username, " : ", update.EffectiveChat().GetID(), " : ", update.EffectiveChat().GetAccessHash())
-	//slog.Info("input peer", update.EffectiveChat().GetInputChannel(), update.EffectiveChat().GetInputPeer())
+	slog.Info("new access hash", update.EffectiveUser().Username, " : ", update.EffectiveChat().GetID(), " : ", update.EffectiveChat().GetAccessHash())
+	slog.Info("input peer", update.EffectiveChat().GetInputChannel(), update.EffectiveChat().GetInputPeer())
 	select {
 	case <-ctx.Done():
 		return nil

@@ -54,7 +54,8 @@ type EmojiCommand struct {
 	DownloadedFile  string
 	File            *models.File
 
-	Iphone bool
+	RawInitCommand string
+	Iphone         bool
 
 	WorkingDir string
 
