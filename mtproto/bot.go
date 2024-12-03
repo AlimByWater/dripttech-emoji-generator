@@ -3,40 +3,47 @@ package userbot
 import (
 	"context"
 	"fmt"
-	tgbotapi "github.com/OvyFlash/telegram-bot-api"
+	"github.com/gotd/td/telegram/message/styling"
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"sync"
+
 	"github.com/celestix/gotgproto"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/dispatcher/handlers/filters"
 	"github.com/celestix/gotgproto/ext"
 	"github.com/celestix/gotgproto/sessionMaker"
 	"github.com/glebarez/sqlite"
+	"github.com/go-telegram/bot"
 	"github.com/gotd/td/telegram/message"
-	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/tg"
-	"log/slog"
-	"os"
-	"strconv"
-	"sync"
 )
 
 type User struct {
-	client         *gotgproto.Client
-	mu             sync.Mutex
-	ctx            context.Context
-	accessHash     sync.Map
-	lastAccessHash int64
+	client               *gotgproto.Client
+	mu                   sync.Mutex
+	ctx                  context.Context
+	accessHash           sync.Map
+	chatIdsToInternalIds sync.Map
+	lastAccessHash       int64
 }
 
-func NewBot() (*User, error) {
-	accessHash := sync.Map{}
-	accessHash.Store(2224939217, 5869140964584068623) //bot bot bot forum
-	return &User{
-		accessHash: sync.Map{},
-	}, nil
+func NewBot() *User {
+	u := &User{
+		accessHash:           sync.Map{},
+		chatIdsToInternalIds: sync.Map{},
+	}
+	return u
 }
 
 func (u *User) Init(ctx context.Context) error {
 	u.ctx = ctx
+
+	u.accessHash.Store(int64(2400904088), int64(4253614615109204755))
+
+	u.chatIdsToInternalIds.Store("-1002400904088_3", int64(2400904088))
 
 	appID, err := strconv.Atoi(os.Getenv("APP_ID"))
 	if err != nil {
@@ -72,46 +79,40 @@ func (u *User) Init(ctx context.Context) error {
 	return nil
 }
 
-func (u *User) sendMessage(ctx context.Context, chatID int64, msg tgbotapi.Message) error {
-	//u.mu.Lock()
-	//defer u.mu.Unlock()
-
+func (u *User) SendMessage(ctx context.Context, chatID string, width int, msg bot.SendMessageParams) error {
 	sender := message.NewSender(tg.NewClient(u.client))
 
-	ah, ok := u.accessHash.Load(chatID)
+	id, ok := u.chatIdsToInternalIds.Load(chatID)
 	if !ok {
-		return fmt.Errorf("не найден доступ к чату %d", chatID)
+		return fmt.Errorf("id не найден доступ к чату %s", chatID)
+	}
+
+	ah, ok := u.accessHash.Load(id)
+	if !ok {
+		return fmt.Errorf("ah не найден доступ к чату %s", chatID)
 	}
 	peer := &tg.InputPeerChannel{
-		ChannelID:  chatID,
+		ChannelID:  id.(int64),
 		AccessHash: ah.(int64),
 	}
 
-	//formats := []message.StyledTextOption{
-	//	styling.Plain("plaintext"), styling.Plain("\n\n"),
-	//	styling.Mention("@durov"), styling.Plain("\n\n"),
-	//	styling.Hashtag("#hashtag"), styling.Plain("\n\n"),
-	//	styling.BotCommand("/command"), styling.Plain("\n\n"),
-	//	styling.URL("https://google.org"), styling.Plain("\n\n"),
-	//	styling.Email("example@example.org"), styling.Plain("\n\n"),
-	//	styling.Bold("bold"), styling.Plain("\n\n"),
-	//	styling.Italic("italic"), styling.Plain("\n\n"),
-	//	styling.Underline("underline"), styling.Plain("\n\n"),
-	//	styling.Strike("strike"), styling.Plain("\n\n"),
-	//	styling.Code("fmt.Println(`Hello, World!`)"), styling.Plain("\n\n"),
-	//	styling.Pre("fmt.Println(`Hello, World!`)", "Go"), styling.Plain("\n\n"),
-	//	styling.TextURL("clickme", "https://google.com"), styling.Plain("\n\n"),
-	//	styling.Phone("+71234567891"), styling.Plain("\n\n"),
-	//	styling.Cashtag("$CASHTAG"), styling.Plain("\n\n"),
-	//	styling.BankCard("5550111111111111"), styling.Plain("\n\n"),
-	//}
-
-	formats := []message.StyledTextOption{
-		styling.Plain(msg.Text), styling.Plain("\n\n"),
+	var formats []message.StyledTextOption
+	for i, entity := range msg.Entities {
+		switch entity.Type {
+		case "custom_emoji":
+			documentID, err := strconv.ParseInt(entity.CustomEmojiID, 10, 64)
+			if err != nil {
+				return fmt.Errorf("ошибка при парсинге id документа: %v", err)
+			}
+			formats = append(formats, styling.CustomEmoji("🎥", documentID))
+		}
+		if math.Mod(float64(i+1), float64(width)) == 0 {
+			formats = append(formats, styling.Plain("\n"))
+		}
 	}
 
-	//_, err := sender.To(peer).Text(ctx, msg)
-	_, err := sender.To(peer).StyledText(ctx, formats...)
+	//_, err := sender.To(peer).SendAs(channel).ReplyMsg(msgc).StyledText(ctx, formats...)
+	_, err := sender.To(peer).SendAs(peer).Reply(msg.ReplyParameters.MessageID).StyledText(ctx, formats...)
 	if err != nil {
 		return fmt.Errorf("ошибка отправки сообщения: %v", err)
 	}
@@ -126,13 +127,13 @@ func (u *User) Shutdown(ctx context.Context) {
 }
 
 func (u *User) echo(ctx *ext.Context, update *ext.Update) error {
+	//slog.Info("new access hash", update.EffectiveUser().Username, " : ", update.EffectiveChat().GetID(), " : ", update.EffectiveChat().GetAccessHash())
+	//slog.Info("input peer", update.EffectiveChat().GetInputChannel(), update.EffectiveChat().GetInputPeer())
 	select {
 	case <-ctx.Done():
 		return nil
 	default:
 		if update.EffectiveChat().GetID() == -1002224939217 || update.EffectiveChat().GetID() == -1002224939217 || update.EffectiveChat().GetID() == 251636949 {
-			//slog.Info("new access hash", update.EffectiveUser().Username, " : ", update.EffectiveChat().GetID(), " : ", update.EffectiveChat().GetAccessHash())
-			//fmt.Println()
 			u.mu.Lock()
 			defer u.mu.Unlock()
 			u.lastAccessHash = update.EffectiveChat().GetAccessHash()

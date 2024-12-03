@@ -7,22 +7,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-// / RoundDimensions rounds the width down to the nearest hundred and adjusts the height
-// to maintain the aspect ratio. Both returned dimensions are guaranteed to be even numbers.
 func RoundDimensions(width, height int) (int, int) {
-	// Round width down to nearest hundred
 	newWidth := (width / 100) * 100
-
-	// Calculate new height to maintain aspect ratio
 	newHeight := int(float64(height) * (float64(newWidth) / float64(width)))
-
-	// Ensure both dimensions are even numbers
 	if newHeight%2 != 0 {
 		newHeight--
 	}
-
 	return newWidth, newHeight
 }
 
@@ -30,15 +23,11 @@ func RoundUpTo100(num int) int {
 	return ((num + 99) / 100) * 100
 }
 
-// DimensionTo800Width resizes dimensions to have a width of 800
-// while maintaining the aspect ratio
 func DimensionToNewWidth(width, height, newWidth int) (int, int) {
 	newHeight := int(float64(height) * (float64(newWidth) / float64(width)))
-
 	return newWidth, newHeight
 }
 
-// getVideoDimensions получает размеры видео используя ffprobe
 func getVideoDimensions(inputVideo string) (width, height int, err error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
@@ -61,19 +50,23 @@ func getVideoDimensions(inputVideo string) (width, height int, err error) {
 	return width, height, nil
 }
 
-// processVideo обрабатывает видео и создает тайлы
+type tile struct {
+	OutputFile string
+	FFmpegArgs []string
+	Position   int
+}
+
+type processResult struct {
+	filename string
+	position int
+	err      error
+}
+
 func processVideo(args *EmojiCommand) ([]string, error) {
-
-	if args.Width == 0 {
-		args.Width = 8
-	}
-
 	width, height, err := getVideoDimensions(args.DownloadedFile)
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Println(width, height)
 
 	width, height = RoundDimensions(width, height)
 
@@ -90,59 +83,137 @@ func processVideo(args *EmojiCommand) ([]string, error) {
 		return nil, err
 	}
 
-	fmt.Println(width, height)
-
-	height = RoundUpTo100(height)
-	fmt.Println(width, height)
+	originalHeight := height // Сохраняем исходную высоту
+	//height = RoundUpTo100(height)
+	lastRowHeight := originalHeight % 100 // Высота последнего ряда до округления
 
 	tileWidth := 100
 	tileHeight := 100
 	tilesX := width / tileWidth
 	tilesY := height / tileHeight
+	if lastRowHeight > 0 {
+		tilesY++
+	}
 
-	var createdFiles []string
+	baseFFmpegArgs := []string{
+		"-i", args.DownloadedFile,
+		"-c:v", "libvpx-vp9",
+		"-crf", "24",
+		"-b:v", "0",
+		"-b:a", "256k",
+		"-t", "3.0",
+		"-r", "10",
+		"-auto-alt-ref", "1",
+		"-metadata:s:v:0", "alpha_mode=1",
+		"-an",
+	}
 
-	for j := 0; j < tilesY; j++ {
-		for i := 0; i < tilesX; i++ {
-			x := i * tileWidth
-			y := j * tileHeight
-			outputFile := filepath.Join(args.WorkingDir, fmt.Sprintf("emoji_%d_%d.webm", j, i))
+	jobs := make(chan tile, tilesX*tilesY)
+	results := make(chan processResult, tilesX*tilesY)
 
-			var vfArgs []string
-			vfArgs = append(vfArgs, fmt.Sprintf("crop=%d:%d:%d:%d", tileWidth, tileHeight, x, y))
-			if args.BackgroundColor != "" {
-				vfArgs = append(vfArgs, fmt.Sprintf("colorkey=%s:similarity=0.2:blend=0.1", args.BackgroundColor))
+	numWorkers := 4
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go worker(jobs, results, &wg)
+	}
+
+	go func() {
+		position := 0
+		for j := 0; j < tilesY; j++ {
+			for i := 0; i < tilesX; i++ {
+				outputFile := filepath.Join(args.WorkingDir, fmt.Sprintf("emoji_%d_%d.webm", j, i))
+
+				var vfArgs []string
+
+				//fmt.Println(tilesY, tileWidth, tileHeight, lastRowHeight, height, width)
+
+				if j == tilesY-1 && lastRowHeight > 0 {
+					// 			 0xF5DEB3
+					padColor := "#04F404@0.1" // По умолчанию прозрачный
+					if args.BackgroundColor != "" {
+						padColor = args.BackgroundColor
+					} else if args.BackgroundBlend != "" {
+						args.BackgroundColor = padColor
+					}
+					vfArgs = []string{
+						fmt.Sprintf("crop=%d:%d:%d:%d", tileWidth, lastRowHeight, i*tileWidth, j*tileHeight),
+						fmt.Sprintf("scale=100:%d", lastRowHeight),
+						fmt.Sprintf("pad=100:100:%d:0:color=%s", 100-lastRowHeight, padColor),
+					}
+				} else {
+					vfArgs = []string{
+						fmt.Sprintf("crop=%d:%d:%d:%d", tileWidth, tileHeight, i*tileWidth, j*tileHeight),
+					}
+				}
+
+				if args.BackgroundColor != "" {
+					vfArgs = append(vfArgs, fmt.Sprintf("colorkey=%s:similarity=%s:blend=%s", args.BackgroundColor, args.BackgroundSim, args.BackgroundBlend))
+				}
+				vfArgs = append(vfArgs, "setsar=1:1")
+				ffmpegArgs := make([]string, len(baseFFmpegArgs))
+				copy(ffmpegArgs, baseFFmpegArgs)
+				ffmpegArgs = append(ffmpegArgs, "-vf", strings.Join(vfArgs, ","), outputFile)
+
+				jobs <- tile{
+					OutputFile: outputFile,
+					FFmpegArgs: ffmpegArgs,
+					Position:   position,
+				}
+				position++
 			}
-			vfArgs = append(vfArgs, fmt.Sprintf("setsar=1:1"))
+		}
+		close(jobs)
+	}()
 
-			cmd := exec.Command("ffmpeg",
-				"-i", args.DownloadedFile,
-				"-c:v", "libvpx-vp9",
-				"-vf", strings.Join(vfArgs, ","),
-				"-crf", "24",
-				"-b:v", "0",
-				"-b:a", "256k",
-				"-t", "2.99",
-				"-r", "10",
-				"-auto-alt-ref", "1",
-				"-metadata:s:v:0", "alpha_mode=1",
-				"-an",
-				outputFile)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
-			if err := cmd.Run(); err != nil {
-				log.Printf("Ошибка при обработке тайла %d_%d: %v", j, i, err)
-				continue
-			}
-			createdFiles = append(createdFiles, outputFile)
+	resultSlice := make([]string, tilesX*tilesY)
+	var errors []error
+
+	for result := range results {
+		if result.err != nil {
+			errors = append(errors, result.err)
+			log.Printf("Error during processing: %v", result.err)
+			continue
+		}
+		resultSlice[result.position] = result.filename
+	}
+
+	if len(errors) > 0 {
+		return nil, fmt.Errorf("encountered %d errors during processing", len(errors))
+	}
+
+	// Убираем пустые элементы из результата
+	var finalResults []string
+	for _, res := range resultSlice {
+		if res != "" {
+			finalResults = append(finalResults, res)
 		}
 	}
 
-	return createdFiles, nil
+	return finalResults, nil
+}
+
+func worker(jobs <-chan tile, results chan<- processResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for tile := range jobs {
+		cmd := exec.Command("ffmpeg", tile.FFmpegArgs...)
+		err := cmd.Run()
+		results <- processResult{
+			filename: tile.OutputFile,
+			position: tile.Position,
+			err:      err,
+		}
+	}
 }
 
 const outputDirTemplate = "/tmp/%s"
 
-// removeDirectory удаляет указанную директорию
 func removeDirectory(directory string) error {
 	return os.RemoveAll(directory)
 }

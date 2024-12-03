@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 )
@@ -12,6 +14,11 @@ var (
 	ErrFileOfInvalidType   = errors.New("file of invalid type")
 	ErrGetFileFromTelegram = errors.New("get file from telegram failed")
 	ErrFileDownloadFailed  = errors.New("ошибка в загрузке файла")
+
+	ErrInvalidFormat = fmt.Errorf("неверный формат параметра, используйте формат param=value или param=[value]")
+	ErrUnknownParam  = fmt.Errorf("неизвестный параметр")
+	ErrInvalidWidth  = fmt.Errorf("ширина должна быть числом")
+	ErrInvalidIphone = fmt.Errorf("параметр iphone должен быть true или false")
 )
 
 var (
@@ -41,6 +48,8 @@ type EmojiCommand struct {
 	PackLink        string
 	Width           int
 	BackgroundColor string
+	BackgroundBlend string
+	BackgroundSim   string
 	UserID          int64
 	DownloadedFile  string
 	File            *models.File
@@ -91,6 +100,14 @@ var argAlias = map[string]string{
 	"фон":        "background",
 	"ф":          "background",
 
+	"background_blend": "background_blend",
+	"bb":               "background_blend",
+	"b_blend":          "background_blend",
+
+	"background_sim": "background_sim",
+	"bs":             "background_sim",
+	"b_sim":          "background_sim",
+
 	// link aliases
 	"link":   "link",
 	"l":      "link",
@@ -134,4 +151,17 @@ var colorMap = map[string]string{
 	"оранжевый":  "0xFFA500",
 	"коричневый": "0x8B4513",
 	"розовый":    "0xFFC0CB",
+}
+
+type EmojiPack struct {
+	ID             int64     `db:"id"`
+	CreatorID      int64     `db:"creator_id"`
+	PackName       string    `db:"pack_name"`
+	FileURL        string    `db:"file_url"`
+	PackLink       *string   `db:"pack_link"`
+	InitialCommand *string   `db:"initial_command"`
+	Bot            string    `db:"bot"`
+	EmojiCount     int       `db:"emoji_count"`
+	CreatedAt      time.Time `db:"created_at"`
+	UpdatedAt      time.Time `db:"updated_at"`
 }
