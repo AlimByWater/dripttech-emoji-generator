@@ -34,7 +34,6 @@ COPY --from=builder /app/.env /app/.env
 COPY --from=builder  /app/session /app/session
 COPY --from=builder  /app/session/user /app/session/user
 
-
 COPY --from=builder  /app/transparent.webm transparent.webm
 
 COPY --from=builder  /app/session session

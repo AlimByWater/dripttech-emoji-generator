@@ -1,4 +1,4 @@
-package main
+package types
 
 import (
 	"errors"
@@ -8,6 +8,13 @@ import (
 
 	"github.com/go-telegram/bot/models"
 )
+
+type EmojiMeta struct {
+	FileID      string `json:"file_id"`
+	DocumentID  string `json:"document_id"`
+	FileName    string `json:"filename"`
+	Transparent bool   `json:"transparent"`
+}
 
 var (
 	ErrWidthInvalid        = errors.New("width must be between 1 and 128")
@@ -30,7 +37,7 @@ const (
 )
 
 var (
-	allowedMimeTypes = []string{
+	AllowedMimeTypes = []string{
 		"image/gif",
 		"image/jpeg",
 		"image/png",
@@ -54,12 +61,14 @@ type EmojiCommand struct {
 	DownloadedFile  string
 	File            *models.File
 
+	QualityValue int
+
 	RawInitCommand string
 	Iphone         bool
 
 	WorkingDir string
 
-	newSet bool
+	NewSet bool
 }
 
 func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {
@@ -81,7 +90,7 @@ func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {
 	return a
 }
 
-var argAlias = map[string]string{
+var ArgAlias = map[string]string{
 	// width aliases
 	"width":  "width",
 	"w":      "width",
@@ -122,7 +131,7 @@ var argAlias = map[string]string{
 	"а":      "iphone",
 }
 
-var colorMap = map[string]string{
+var ColorMap = map[string]string{
 	"black":   "0x000000",
 	"white":   "0xFFFFFF",
 	"red":     "0xFF0000",

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"emoji-generator/types"
 	"fmt"
 	"log"
 	"os"
@@ -62,25 +63,29 @@ type processResult struct {
 	err      error
 }
 
-func processVideo(args *EmojiCommand) ([]string, error) {
+func processVideo(args *types.EmojiCommand) ([]string, error) {
 	width, height, err := getVideoDimensions(args.DownloadedFile)
 	if err != nil {
 		return nil, err
 	}
 
-	width, height = RoundDimensions(width, height)
+	// Если качество больше 0, значит мы прогоняем видео второй раз из за ошибку STICKER_VIDEO_BIG
+	if args.QualityValue == 0 {
 
-	if args.Width != 0 {
-		width, height = DimensionToNewWidth(width, height, args.Width*100)
-	}
-	var i int
-	for i = width; i >= 100; i = i / 100 {
-	}
-	args.Width = i
+		width, height = RoundDimensions(width, height)
 
-	args.DownloadedFile, err = resizeVideo(args, width, height)
-	if err != nil {
-		return nil, err
+		if args.Width != 0 {
+			width, height = DimensionToNewWidth(width, height, args.Width*100)
+		}
+		var i int
+		for i = width; i >= 100; i = i / 100 {
+		}
+		args.Width = i
+
+		args.DownloadedFile, err = resizeVideo(args, width, height)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	originalHeight := height // Сохраняем исходную высоту
@@ -96,10 +101,11 @@ func processVideo(args *EmojiCommand) ([]string, error) {
 	}
 
 	baseFFmpegArgs := []string{
+		"-y",
 		"-i", args.DownloadedFile,
 		"-c:v", "libvpx-vp9",
 		"-crf", "24",
-		"-b:v", "0",
+		"-b:v", fmt.Sprintf("%d", args.QualityValue),
 		"-b:a", "256k",
 		"-t", "3.0",
 		"-r", "10",
@@ -218,7 +224,7 @@ func removeDirectory(directory string) error {
 	return os.RemoveAll(directory)
 }
 
-func resizeVideo(args *EmojiCommand, toWidth, toHeight int) (string, error) {
+func resizeVideo(args *types.EmojiCommand, toWidth, toHeight int) (string, error) {
 	outputFile := filepath.Join(args.WorkingDir, "resized.webm")
 
 	cmd := exec.Command("ffmpeg",

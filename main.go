@@ -24,8 +24,13 @@ import (
 var userBot *userbot.User
 var tgbotApi *tgbotapi.BotAPI
 var wg sync.WaitGroup
+var env string
+var token string
 
 func main() {
+	env = os.Getenv("ENV")
+	slog.Info("Запуск Bot...", slog.String("ENV", env))
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer cancel()
 
@@ -41,7 +46,7 @@ func main() {
 	}
 	slog.Info("postgres initialized")
 
-	rl := rate.NewLimiter(rate.Every(1*time.Second), 30)
+	rl := rate.NewLimiter(rate.Every(1*time.Second), 60)
 	c := httpclient.NewClient(rl)
 
 	userBot = userbot.NewBot()
@@ -51,14 +56,19 @@ func main() {
 	}
 	slog.Info("UserBot initialized")
 
-	b, err := bot.New(os.Getenv("BOT_TOKEN"),
+	token = os.Getenv("BOT_TOKEN")
+	if env == "test" {
+		token = os.Getenv("TEST_BOT_TOKEN")
+	}
+
+	b, err := bot.New(token,
 		bot.WithDefaultHandler(handlerWithWG),
 		bot.WithHTTPClient(time.Minute, c))
 	if err != nil {
 		log.Fatalf("Ошибка при создании бота: %v", err)
 	}
 
-	tgbotApi, err = tgbotapi.NewBotAPI(os.Getenv("BOT_TOKEN"))
+	tgbotApi, err = tgbotapi.NewBotAPI(token)
 	if err != nil {
 		log.Fatalf("Ошибка при создании бота tgbotapi: %v", err)
 	}
