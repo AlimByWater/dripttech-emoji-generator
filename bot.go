@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"emoji-generator/db"
 	"emoji-generator/types"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +29,12 @@ var messagesToDelete sync.Map
 func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
+	}
+
+	if update.Message.Chat.Type == models.ChatTypePrivate {
+		if strings.Contains(update.Message.Text, "start") {
+			handleStartCommand(ctx, b, update)
+		}
 	}
 
 	for i, chatID := range validchatIDs {
@@ -54,21 +62,58 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 func handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message.Chat.Type == models.ChatTypePrivate {
-		// delete message
-		msgID, ok := messagesToDelete.LoadAndDelete(update.Message.From.ID)
-		if ok {
-			//err := b.DeleteMessage(ctx, update.Message.Chat.ID, messagesToDelete.Load(update.Message.From.ID).(int))
-			//for i := range validchatIDs {
-			//	deleted, _ := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: validchatIDs[i], MessageID: msgID.(int)})
-			//	if deleted {
-			//		break
-			//	}
-			//}
+		me, err := b.GetMe(ctx)
+		if err != nil {
+			slog.Error("Failed to get bot info", slog.String("err", err.Error()))
+			_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Возникла ошибка при получении информации о боте",
+			})
+			slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
+			return
+		}
 
-			err := userBot.DeleteMessage(ctx, msgID.(int))
+		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, me.Username)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			slog.Error("Failed to check if user exists", slog.String("err", err.Error()))
+			_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Возникла ошибка при получении информации из БД. Попробуйте позже",
+			})
+			slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
+			return
+		}
+
+		if !exist {
+			err = createBlankDatabaseRecord(ctx, me.Username, update.Message.From.ID)
 			if err != nil {
-				slog.Error("Error deleting message", "err", err)
+				slog.Error("Failed to create blank database record", slog.String("err", err.Error()))
+				_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID: update.Message.Chat.ID,
+					Text:   "Возникла ошибка при создании базы данных",
+				})
+				slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
+				return
 			}
+
+			// delete message
+			msgID, ok := messagesToDelete.LoadAndDelete(update.Message.From.ID)
+			if ok {
+				for i := range validchatIDs {
+					deleted, _ := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: validchatIDs[i], MessageID: msgID.(int)})
+					if deleted {
+						break
+					}
+				}
+			}
+		}
+
+		_, err = b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "Можешь делать паки",
+		})
+		if err != nil {
+			slog.Error("Failed to send message to DM", slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID), slog.String("err", err.Error()))
 		}
 	}
 }
@@ -136,6 +181,17 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 
+	exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, botInfo.Username)
+	if err != nil {
+		slog.Error("Failed to check if user exists", slog.Int64("user_id", update.Message.From.ID), slog.String("err", err.Error()))
+		sendInitMessage(update.Message.Chat.ID, update.Message.ID)
+		return
+	}
+	if !exist {
+		sendInitMessage(update.Message.Chat.ID, update.Message.ID)
+		return
+	}
+
 	emojiPack, err := setupPackDetails(ctx, emojiArgs, botInfo)
 	if err != nil {
 		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
@@ -143,16 +199,15 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 
-	pgBot, err := db.Postgres.GetBotByName(ctx, botInfo.Username)
-	if err != nil {
-		slog.Error("Failed to get bot by name", slog.String("err", err.Error()))
-		sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "Не удалось получить информацию о боте")
+	// Create working directory and download file
+	if err := prepareWorkingEnvironment(ctx, b, update, emojiArgs); err != nil {
+		handleDownloadError(ctx, b, update, err)
 		return
 	}
 
 	if emojiPack == nil {
 		// Create database record
-		emojiPack, err = createDatabaseRecord(ctx, emojiArgs, args, pgBot.Name)
+		emojiPack, err = createDatabaseRecord(ctx, emojiArgs, args, botInfo.Username)
 		if err != nil {
 			slog.Error("Failed to log emoji command",
 				slog.String("err", err.Error()),
@@ -161,12 +216,6 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 			sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
 			return
 		}
-	}
-
-	// Create working directory and download file
-	if err := prepareWorkingEnvironment(ctx, b, update, emojiArgs); err != nil {
-		handleDownloadError(ctx, b, update, err)
-		return
 	}
 
 	var stickerSet *models.StickerSet
@@ -189,25 +238,9 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		stickerSet, emojiMetaRows, err = addEmojis(ctx, b, emojiArgs, createdFiles)
 		if err != nil {
 			if strings.Contains(err.Error(), "PEER_ID_INVALID") || strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "bot was blocked by the user") {
-				inlineKeyboard := tgbotapi.NewInlineKeyboardButtonURL("/start", fmt.Sprintf("t.me/%s?start=start", tgbotApi.Self.UserName))
-				row := tgbotapi.NewInlineKeyboardRow(inlineKeyboard)
-				keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Чтобы бот мог создать пак \nнажмите кнопку ниже\n↓↓↓↓↓↓↓↓"))
-				msg.ReplyMarkup = keyboard
-				msg.ParseMode = "MarkdownV2"
-				msg.ReplyParameters = tgbotapi.ReplyParameters{
-					MessageID: update.Message.ID,
-					ChatID:    update.Message.Chat.ID,
-				}
-
-				_, err2 := tgbotApi.Send(msg)
-				if err2 != nil {
-					slog.Error("Failed to send message with emojis", slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID), slog.String("err2", err2.Error()))
-				}
-
+				sendInitMessage(update.Message.Chat.ID, update.Message.ID)
 				// TODO implement later
 				//messagesToDelete.Store(update.Message.From.ID, update.Message.ID)
-
 				return
 
 			}
@@ -337,6 +370,24 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 }
 
+func sendInitMessage(chatID int64, msgID int) {
+	inlineKeyboard := tgbotapi.NewInlineKeyboardButtonURL("/start", fmt.Sprintf("t.me/%s?start=start", tgbotApi.Self.UserName))
+	row := tgbotapi.NewInlineKeyboardRow(inlineKeyboard)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Чтобы бот мог создать пак \nнажмите кнопку ниже\n↓↓↓↓↓↓↓↓"))
+	msg.ReplyMarkup = keyboard
+	msg.ParseMode = "MarkdownV2"
+	msg.ReplyParameters = tgbotapi.ReplyParameters{
+		MessageID: msgID,
+		ChatID:    chatID,
+	}
+
+	_, err2 := tgbotApi.Send(msg)
+	if err2 != nil {
+		slog.Error("Failed to send message with emojis", slog.Int64("user_id", chatID), slog.String("err2", err2.Error()))
+	}
+}
+
 func sendErrorMessage(ctx context.Context, b *bot.Bot, u *models.Update, chatID int64, errToSend string) {
 	params := bot.SendMessageParams{
 		ReplyParameters: &models.ReplyParameters{
@@ -344,7 +395,7 @@ func sendErrorMessage(ctx context.Context, b *bot.Bot, u *models.Update, chatID 
 			ChatID:    u.Message.Chat.ID,
 		},
 		ChatID: chatID,
-		Text:   fmt.Sprintf("Возникла ошибка: %s", errToSend),
+		Text:   fmt.Sprintf("%s", errToSend),
 	}
 	//_, err := b.SendMessage(ctx, params)
 
@@ -443,6 +494,42 @@ func createDatabaseRecord(ctx context.Context, args *types.EmojiCommand, initial
 	return db.Postgres.LogEmojiCommand(ctx, emojiPack)
 }
 
+//create table public.emoji_packs (
+//id integer primary key not null default nextval('emoji_packs_id_seq'::regclass),
+//creator_id bigint not null,
+//pack_name character varying(255) not null,
+//file_url text not null,
+//pack_link text,
+//initial_command text,
+//bot_name character varying(255) not null,
+//emoji_count integer not null default 0,
+//created_at timestamp with time zone default CURRENT_TIMESTAMP,
+//updated_at timestamp with time zone default CURRENT_TIMESTAMP,
+//completed boolean default false,
+//foreign key (bot_name) references public.bots (name)
+//match simple on update no action on delete no action
+//);
+//create index idx_emoji_packs_creator on emoji_packs using btree (creator_id);
+//create index idx_emoji_packs_pack_link on emoji_packs using btree (pack_link);
+//create index idx_emoji_packs_bot on emoji_packs using btree (bot_name);
+//
+
+func createBlankDatabaseRecord(ctx context.Context, botName string, userID int64) error {
+	emojiPack := db.EmojiPack{
+		CreatorID:  userID,
+		PackName:   "blank",
+		BotName:    botName,
+		EmojiCount: 0,
+	}
+
+	_, err := db.Postgres.CreateEmojiPack(ctx, &emojiPack)
+	if err != nil {
+		return fmt.Errorf("failed to create blank emoji pack: %w", err)
+	}
+
+	return nil
+}
+
 func prepareWorkingEnvironment(ctx context.Context, b *bot.Bot, update *models.Update, args *types.EmojiCommand) error {
 	if err := os.MkdirAll(args.WorkingDir, 0755); err != nil {
 		return fmt.Errorf("failed to create working directory: %w", err)
@@ -460,6 +547,8 @@ func handleDownloadError(ctx context.Context, b *bot.Bot, update *models.Update,
 	slog.Error("Failed to download file", slog.String("err", err.Error()))
 	var message string
 	switch err {
+	case types.ErrFileNotProvided:
+		message = "Нужен файл для создания эмодзи"
 	case types.ErrFileOfInvalidType:
 		message = "Неподдерживаемый тип файла. Поддерживаются: GIF, JPEG, PNG, WebP, MP4, WebM, MPEG"
 	case types.ErrGetFileFromTelegram:
@@ -559,9 +648,12 @@ func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *type
 	var fileExt string
 	var mimeType string
 
+	var exist bool
+
 	if m.Video != nil {
 		fileID = m.Video.FileID
 		mimeType = m.Video.MimeType
+		exist = true
 	} else if m.Photo != nil && len(m.Photo) > 0 {
 		fileID = m.Photo[len(m.Photo)-1].FileID
 		mimeType = "image/jpeg"
@@ -572,6 +664,7 @@ func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *type
 		} else {
 			return "", types.ErrFileOfInvalidType
 		}
+		exist = true
 	} else if m.ReplyToMessage != nil {
 		if m.ReplyToMessage.Video != nil {
 			fileID = m.ReplyToMessage.Video.FileID
@@ -583,6 +676,11 @@ func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *type
 			fileID = m.ReplyToMessage.Document.FileID
 			mimeType = m.ReplyToMessage.Document.MimeType
 		}
+		exist = true
+	}
+
+	if exist == false || fileID == "" {
+		return "", types.ErrFileNotProvided
 	}
 
 	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})

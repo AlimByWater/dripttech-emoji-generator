@@ -18,6 +18,7 @@ type EmojiMeta struct {
 
 var (
 	ErrWidthInvalid        = errors.New("width must be between 1 and 128")
+	ErrFileNotProvided     = errors.New("file not provided")
 	ErrFileOfInvalidType   = errors.New("file of invalid type")
 	ErrGetFileFromTelegram = errors.New("get file from telegram failed")
 	ErrFileDownloadFailed  = errors.New("ошибка в загрузке файла")

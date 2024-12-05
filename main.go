@@ -46,7 +46,7 @@ func main() {
 	}
 	slog.Info("postgres initialized")
 
-	rl := rate.NewLimiter(rate.Every(1*time.Second), 60)
+	rl := rate.NewLimiter(rate.Every(1*time.Second), 100)
 	c := httpclient.NewClient(rl)
 
 	userBot = userbot.NewBot()

@@ -151,6 +151,16 @@ func (p *postgres) SetEmojiCount(ctx context.Context, packID int64, count int) e
 	return nil
 }
 
+func (p *postgres) UserExists(ctx context.Context, userID int64, botName string) (bool, error) {
+	var exists bool
+	err := p.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM emoji_packs WHERE creator_id = $1 AND bot_name = $2)`, userID, botName)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	return exists, nil
+}
+
 // LogEmojiCommand logs the execution of an emoji command
 func (p *postgres) LogEmojiCommand(ctx context.Context, pack *EmojiPack) (*EmojiPack, error) {
 	if pack.PackLink == nil {
