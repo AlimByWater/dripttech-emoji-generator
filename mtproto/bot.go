@@ -154,9 +154,13 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 
 	var formats []message.StyledTextOption
 
+	if width < types.DefaultWidth {
+		width = types.DefaultWidth
+	}
+
 	// "⠀"
 	for i, emoji := range emojis {
-		if i == len(emojis)-1 {
+		if i == len(emojis)-1 || i == types.MaxStickerInMessage-1 {
 			break
 		}
 		if emoji.Transparent {
@@ -168,7 +172,7 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 			}
 			formats = append(formats, styling.CustomEmoji("🎥", documentID))
 		}
-		if math.Mod(float64(i+1), float64(8)) == 0 {
+		if math.Mod(float64(i+1), float64(width)) == 0 {
 			formats = append(formats, styling.Plain("\n"))
 		}
 	}

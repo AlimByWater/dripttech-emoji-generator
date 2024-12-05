@@ -26,6 +26,8 @@ var (
 	ErrUnknownParam  = fmt.Errorf("неизвестный параметр")
 	ErrInvalidWidth  = fmt.Errorf("ширина должна быть числом")
 	ErrInvalidIphone = fmt.Errorf("параметр iphone должен быть true или false")
+
+	ErrInvalidBackgroundArgumentsUse = fmt.Errorf("b_sim и b_blend являются дополнительными параметрами к удалению цвета указанного в background. Используйте эти парамтеры в связке")
 )
 
 var (
@@ -34,6 +36,11 @@ var (
 
 const (
 	TelegramPackLinkAndNameLength = 64
+	DefaultWidth                  = 8
+
+	MaxStickersInBatch  = 50
+	MaxStickersTotal    = 200
+	MaxStickerInMessage = 100
 )
 
 var (
