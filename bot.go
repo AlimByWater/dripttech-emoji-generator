@@ -960,20 +960,29 @@ func createStickerSetWithBatches(ctx context.Context, b *bot.Bot, args *types.Em
 		}
 	}
 
-	ok, err := b.CreateNewStickerSet(ctx, &bot.CreateNewStickerSetParams{
+	_, err := b.CreateNewStickerSet(ctx, &bot.CreateNewStickerSetParams{
 		UserID:      args.UserID,
 		Name:        args.PackLink,
 		Title:       args.SetName,
 		StickerType: "custom_emoji",
 		Stickers:    firstBatch,
 	})
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "STICKER_VIDEO_NOWEBM") {
 		slog.Debug("new sticker set FAILED", slog.String("name", args.PackLink), slog.String("error", err.Error()))
 		return nil, fmt.Errorf("create sticker set: %w", err)
-	}
-
-	if !ok {
-		return nil, fmt.Errorf("failed to create sticker set")
+	} else if err != nil && strings.Contains(err.Error(), "STICKER_VIDEO_NOWEBM") {
+		count = 1
+		_, err := b.CreateNewStickerSet(ctx, &bot.CreateNewStickerSetParams{
+			UserID:      args.UserID,
+			Name:        args.PackLink,
+			Title:       args.SetName,
+			StickerType: "custom_emoji",
+			Stickers:    firstBatch,
+		})
+		if err != nil {
+			slog.Debug("new sticker set FAILED", slog.String("name", args.PackLink), slog.String("error", err.Error()))
+			return nil, fmt.Errorf("create sticker set: %w", err)
+		}
 	}
 
 	emojiFileIDs = emojiFileIDs[count:]

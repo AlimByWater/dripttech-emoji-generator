@@ -104,6 +104,8 @@ func processVideo(args *types.EmojiCommand) ([]string, error) {
 		"-y",
 		"-i", args.DownloadedFile,
 		"-c:v", "libvpx-vp9",
+		"-profile:v", "0",
+		"-pix_fmt", "yuva420p",
 		"-crf", "24",
 		"-b:v", fmt.Sprintf("%d", args.QualityValue),
 		"-b:a", "256k",
