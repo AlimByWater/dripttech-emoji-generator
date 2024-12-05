@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"emoji-generator/db"
+	"emoji-generator/queue"
 	"emoji-generator/types"
 	"errors"
 	"fmt"
@@ -23,8 +24,11 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-var validchatIDs = []string{"-1002400904088_3", "-1002491830452_3"}
-var messagesToDelete sync.Map
+var (
+	stickerQueue     = queue.New()
+	validchatIDs     = []string{"-1002400904088_3", "-1002491830452_3"}
+	messagesToDelete sync.Map
+)
 
 func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
@@ -657,6 +661,7 @@ func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *type
 	} else if m.Photo != nil && len(m.Photo) > 0 {
 		fileID = m.Photo[len(m.Photo)-1].FileID
 		mimeType = "image/jpeg"
+		exist = true
 	} else if m.Document != nil {
 		if slices.Contains(types.AllowedMimeTypes, m.Document.MimeType) {
 			fileID = m.Document.FileID
@@ -679,7 +684,7 @@ func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *type
 		exist = true
 	}
 
-	if exist == false || fileID == "" {
+	if exist == false {
 		return "", types.ErrFileNotProvided
 	}
 
@@ -751,6 +756,7 @@ func uploadSticker(ctx context.Context, b *bot.Bot, userID int64, filename strin
 			slog.Debug("upload sticker FAILED",
 				slog.String("file", filename),
 				slog.String("err", err.Error()))
+		} else {
 		}
 
 		if waitTime, err := handleTelegramError(err); err != nil {
@@ -769,6 +775,21 @@ func addEmojis(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiF
 	if err := validateEmojiFiles(emojiFiles); err != nil {
 		return nil, nil, err
 	}
+
+	// Пытаемся получить доступ к обработке пака
+	canProcess, waitCh := stickerQueue.Acquire(args.PackLink)
+	if !canProcess {
+		// Если нельзя обрабатывать сейчас - ждем своей очереди
+		slog.Debug("В ОЧЕРЕДИ", slog.String("pack_link", args.PackLink))
+		select {
+		case <-ctx.Done():
+			stickerQueue.Release(args.PackLink)
+			return nil, nil, ctx.Err()
+		case <-waitCh:
+			slog.Debug("ОЧЕРЕДЬ ПРИШЛА, НАЧИНАЕТСЯ ОБРАБОТКА", slog.String("pack_link", args.PackLink))
+		}
+	}
+	defer stickerQueue.Release(args.PackLink)
 
 	var set *models.StickerSet
 	if !args.NewSet {
@@ -849,7 +870,6 @@ func addEmojis(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiF
 // createNewStickerSet создает новый набор стикеров
 func createNewStickerSet(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiFileIDs []string) (*models.StickerSet, error) {
 	totalWithTransparent := len(emojiFileIDs)
-
 	if totalWithTransparent > types.MaxStickersTotal {
 		return nil, fmt.Errorf("общее количество стикеров (%d) с прозрачными превысит максимум (%d)", totalWithTransparent, types.MaxStickersTotal)
 	}
@@ -900,6 +920,12 @@ func addStickersToSet(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 				},
 			})
 			if err == nil {
+				slog.Debug("add sticker to set SUCCESS",
+					slog.String("file_id", emojiFileIDs[i]),
+					slog.String("pack", args.PackLink),
+					slog.Int64("user_id", args.UserID),
+				)
+
 				break
 			} else {
 				slog.Debug("error sending sticker", "err", err.Error())
@@ -917,8 +943,6 @@ func addStickersToSet(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 
 // createStickerSetWithBatches создает новый набор стикеров
 func createStickerSetWithBatches(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiFileIDs []string) (*models.StickerSet, error) {
-	// Создаем новый набор стикеров с первым стикером
-
 	count := len(emojiFileIDs)
 	if count > types.MaxStickersInBatch {
 		count = types.MaxStickersInBatch
@@ -1053,6 +1077,13 @@ func uploadEmojiFiles(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 		fileID, err := uploadSticker(ctx, b, args.UserID, emojiFile, fileData)
 		if err != nil {
 			return nil, nil, err
+		} else {
+			//slog.Debug("upload sticker SUCCESS",
+			//	slog.String("file", emojiFile),
+			//	slog.String("pack", args.PackLink),
+			//	slog.Int64("user_id", args.UserID),
+			//	slog.Bool("transparent", false),
+			//)
 		}
 
 		// Вычисляем позицию в сетке
@@ -1074,6 +1105,13 @@ func uploadEmojiFiles(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 					transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
 					if err != nil {
 						return nil, nil, fmt.Errorf("upload transparent sticker: %w", err)
+					} else {
+						//slog.Debug("upload sticker SUCCESS",
+						//	slog.String("file", emojiFile),
+						//	slog.String("pack", args.PackLink),
+						//	slog.Int64("user_id", args.UserID),
+						//	slog.Bool("transparent", true),
+						//)
 					}
 					emojiMetaRows[row][j] = types.EmojiMeta{
 						FileID:      transparentFileID,
@@ -1102,6 +1140,13 @@ func uploadEmojiFiles(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 					transparentFileID, err := uploadSticker(ctx, b, args.UserID, "transparent.webm", transparentData)
 					if err != nil {
 						return nil, nil, fmt.Errorf("upload transparent sticker: %w", err)
+					} else {
+						//slog.Debug("upload sticker SUCCESS",
+						//	slog.String("file", emojiFile),
+						//	slog.String("pack", args.PackLink),
+						//	slog.Int64("user_id", args.UserID),
+						//	slog.Bool("transparent", true),
+						//)
 					}
 					emojiMetaRows[row][j] = types.EmojiMeta{
 						FileID:      transparentFileID,
