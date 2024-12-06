@@ -34,16 +34,16 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
 	}
-
-	if update.Message.Chat.Type == models.ChatTypePrivate {
-
-	}
-
 	if update.Message.Chat.Type == models.ChatTypeChannel || update.Message.Chat.Type == models.ChatTypeSupergroup || update.Message.Chat.Type == models.ChatTypeGroup {
 		for i, chatID := range validchatIDs {
 			if chatID == fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID) {
 				break
 			}
+
+			if chatID == fmt.Sprintf("%d", update.Message.Chat.ID) {
+				break
+			}
+
 			if i == len(validchatIDs)-1 {
 				return
 			}
@@ -195,10 +195,18 @@ const (
 
 func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
 	fmt.Println(update.Message.From.ID, update.Message.From.Username)
-	if update.Message.From.IsBot || update.Message.From.ID == 1087968824 {
-		update.Message.From.ID = 251636949
-		update.Message.From.Username = "no_alim"
-		update.Message.From.IsBot = false
+	if update.Message.From.ID == 1087968824 {
+		if update.Message.Chat.ID == -1002002718381 {
+			update.Message.From.ID = 61049030
+			update.Message.From.Username = "ACKETC"
+			update.Message.From.IsBot = false
+		}
+
+		if update.Message.Chat.ID == -1002400904088 || update.Message.Chat.ID == -1002491830452 {
+			update.Message.From.ID = 251636949
+			update.Message.From.Username = "no_alim"
+			update.Message.From.IsBot = false
+		}
 	}
 
 	// Extract command arguments
