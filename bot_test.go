@@ -27,7 +27,11 @@ func TestCreateBlankDatabaseRecord(t *testing.T) {
 		t.Fatalf("Ошибка инициализации БД: %v", err)
 	}
 
-	err = createBlankDatabaseRecord(ctx, "optimus_polygon_bot", 251636949)
-	assert.Error(t, err)
+	has, err := db.Postgres.HasPermissionForPrivateEmojiGeneration(ctx, 1162899041)
+	assert.NoError(t, err)
+	assert.True(t, has)
 
+	has, err = db.Postgres.HasPermissionForPrivateEmojiGeneration(ctx, 251636949)
+	assert.NoError(t, err)
+	assert.False(t, has)
 }

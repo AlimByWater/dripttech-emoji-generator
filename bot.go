@@ -26,7 +26,7 @@ import (
 
 var (
 	stickerQueue     = queue.New()
-	validchatIDs     = []string{"-1002400904088_3", "-1002491830452_3"}
+	validchatIDs     = []string{"-1002400904088_3", "-1002491830452_3", "-1002002718381"}
 	messagesToDelete sync.Map
 )
 
@@ -36,32 +36,66 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	if update.Message.Chat.Type == models.ChatTypePrivate {
-		if strings.Contains(update.Message.Text, "start") {
-			handleStartCommand(ctx, b, update)
-		}
+
 	}
 
-	for i, chatID := range validchatIDs {
-		if chatID == fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID) {
-			break
+	if update.Message.Chat.Type == models.ChatTypeChannel || update.Message.Chat.Type == models.ChatTypeSupergroup || update.Message.Chat.Type == models.ChatTypeGroup {
+		for i, chatID := range validchatIDs {
+			if chatID == fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID) {
+				break
+			}
+			if i == len(validchatIDs)-1 {
+				return
+			}
 		}
-		if i == len(validchatIDs)-1 {
+
+		// Проверяем, является ли сообщение командой
+		if strings.HasPrefix(update.Message.Text, "/emoji") {
+			handleEmojiCommand(ctx, b, update)
+		} else if update.Message.Text == "/emoji" {
+			handleEmojiCommand(ctx, b, update)
+		} else if strings.HasPrefix(update.Message.Caption, "/emoji ") {
+			handleEmojiCommand(ctx, b, update)
+		} else if update.Message.Caption == "/emoji " {
+			handleEmojiCommand(ctx, b, update)
+		} else if update.Message.Text == "/info" {
+			handleInfoCommand(ctx, b, update)
+		}
+
+		return
+	}
+
+	if update.Message.Chat.Type == models.ChatTypePrivate {
+		if strings.Contains(update.Message.Text, "start") {
+			handleStartCommand(ctx, b, update)
+			return
+		} else if strings.Contains(update.Message.Text, "info") {
+			handleInfoCommand(ctx, b, update)
+			return
+		}
+
+		if strings.HasPrefix(update.Message.Text, "/emoji") ||
+			strings.HasPrefix(update.Message.Caption, "/emoji ") {
+
+			handleEmojiCommandForDM(ctx, b, update)
 			return
 		}
 	}
+}
 
-	// Проверяем, является ли сообщение командой
-	if strings.HasPrefix(update.Message.Text, "/emoji") {
-		handleEmojiCommand(ctx, b, update)
-	} else if update.Message.Text == "/emoji" {
-		handleEmojiCommand(ctx, b, update)
-	} else if strings.HasPrefix(update.Message.Caption, "/emoji ") {
-		handleEmojiCommand(ctx, b, update)
-	} else if update.Message.Caption == "/emoji " {
-		handleEmojiCommand(ctx, b, update)
-	} else if update.Message.Text == "/info" {
-		handleInfoCommand(ctx, b, update)
+func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Update) {
+	has, err := db.Postgres.HasPermissionForPrivateEmojiGeneration(ctx, update.Message.From.ID)
+	if err != nil {
+		slog.Error("Failed to check permission for private emoji generation", slog.String("err", err.Error()))
+		sendMessageByBot(ctx, b, update, "Возникла внутреняя ошибка. Попробуйте позже")
+		return
 	}
+
+	if !has {
+		sendMessageByBot(ctx, b, update, "Вы не можете создавать паки в личном чате. Возможно когда-нибудь...")
+		return
+	}
+
 }
 
 func handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -172,12 +206,12 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	emojiArgs, err := parseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
-		sendErrorMessage(ctx, b, update, update.Message.Chat.ID, err.Error())
+		sendErrorMessage(ctx, update, update.Message.Chat.ID, err.Error())
 		return
 	}
 
 	if update.Message.From.IsBot || update.Message.From.ID < 0 {
-		sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "Создать пак можно только с личного аккаунта")
+		sendErrorMessage(ctx, update, update.Message.Chat.ID, "Создать пак можно только с личного аккаунта")
 		return
 	}
 
@@ -188,7 +222,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	botInfo, err := b.GetMe(ctx)
 	if err != nil {
 		slog.Error("Failed to get bot info", slog.String("err", err.Error()))
-		sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "Не удалось получить информацию о боте")
+		sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось получить информацию о боте")
 		return
 	}
 
@@ -206,7 +240,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	emojiPack, err := setupPackDetails(ctx, emojiArgs, botInfo)
 	if err != nil {
 		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
-		sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "пак с подобной ссылкой не найден")
+		sendErrorMessage(ctx, update, update.Message.Chat.ID, "пак с подобной ссылкой не найден")
 		return
 	}
 
@@ -224,7 +258,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 				slog.String("err", err.Error()),
 				slog.String("pack_link", emojiArgs.PackLink),
 				slog.Int64("user_id", emojiArgs.UserID))
-			sendErrorMessage(ctx, b, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
+			sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
 			return
 		}
 	}
@@ -241,7 +275,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 			if err2 != nil {
 				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
 			}
-			sendErrorMessage(ctx, b, update, update.Message.Chat.ID, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
+			sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
 			return
 		}
 
@@ -262,7 +296,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 			}
 
 			if strings.Contains(err.Error(), "STICKERSET_INVALID") {
-				sendErrorMessage(ctx, b, update, update.Message.Chat.ID, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
+				sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
 				return
 			}
 
@@ -277,12 +311,12 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 
 				if waitTime > 0 {
 					dur := time.Duration(waitTime * int(time.Second))
-					sendErrorMessage(ctx, b, update, update.Message.Chat.ID, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
+					sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
 					return
 				}
 			}
 
-			sendErrorMessage(ctx, b, update, update.Message.Chat.ID, fmt.Sprintf("%s", err.Error()))
+			sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("%s", err.Error()))
 			return
 		}
 
@@ -399,7 +433,24 @@ func sendInitMessage(chatID int64, msgID int) {
 	}
 }
 
-func sendErrorMessage(ctx context.Context, b *bot.Bot, u *models.Update, chatID int64, errToSend string) {
+func sendMessageByBot(ctx context.Context, b *bot.Bot, u *models.Update, msgToSend string) {
+	params := &bot.SendMessageParams{
+		ReplyParameters: &models.ReplyParameters{
+			MessageID: u.Message.ID,
+			ChatID:    u.Message.Chat.ID,
+		},
+		ChatID: u.Message.Chat.ID,
+		Text:   fmt.Sprintf("%s", msgToSend),
+	}
+
+	_, err := b.SendMessage(ctx, params)
+	if err != nil {
+		slog.Error("Failed to send error message", slog.String("err", err.Error()), slog.String("username", u.Message.From.Username), slog.Int64("user_id", u.Message.From.ID))
+	}
+	return
+}
+
+func sendErrorMessage(ctx context.Context, u *models.Update, chatID int64, errToSend string) {
 	params := bot.SendMessageParams{
 		ReplyParameters: &models.ReplyParameters{
 			MessageID: u.Message.ID,
@@ -569,7 +620,7 @@ func handleDownloadError(ctx context.Context, b *bot.Bot, update *models.Update,
 	default:
 		message = "Ошибка при загрузке файла"
 	}
-	sendErrorMessage(ctx, b, update, update.Message.Chat.ID, message)
+	sendErrorMessage(ctx, update, update.Message.Chat.ID, message)
 }
 
 func parseArgs(arg string) (*types.EmojiCommand, error) {
@@ -927,11 +978,11 @@ func addStickersToSet(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 				},
 			})
 			if err == nil {
-				slog.Debug("add sticker to set SUCCESS",
-					slog.String("file_id", emojiFileIDs[i]),
-					slog.String("pack", args.PackLink),
-					slog.Int64("user_id", args.UserID),
-				)
+				//slog.Debug("add sticker to set SUCCESS",
+				//	slog.String("file_id", emojiFileIDs[i]),
+				//	slog.String("pack", args.PackLink),
+				//	slog.Int64("user_id", args.UserID),
+				//)
 
 				break
 			} else {

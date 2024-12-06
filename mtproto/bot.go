@@ -4,6 +4,8 @@ import (
 	"context"
 	"emoji-generator/types"
 	"fmt"
+	"github.com/celestix/gotgproto/dispatcher/handlers"
+	"github.com/celestix/gotgproto/dispatcher/handlers/filters"
 	"github.com/gotd/td/telegram/message/styling"
 	"log/slog"
 	"math"
@@ -74,8 +76,8 @@ func (u *User) Init(ctx context.Context) error {
 		return fmt.Errorf("ошибка создания клиента: %v", err2)
 	}
 
-	//dispatcher := u.client.Dispatcher
-	//dispatcher.AddHandlerToGroup(handlers.NewMessage(filters.Message.Text, u.echo), 0)
+	dispatcher := u.client.Dispatcher
+	dispatcher.AddHandlerToGroup(handlers.NewMessage(filters.Message.Text, u.echo), 0)
 
 	return nil
 }

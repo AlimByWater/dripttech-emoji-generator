@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -185,4 +187,17 @@ func (p *postgres) LogEmojiCommand(ctx context.Context, pack *EmojiPack) (*Emoji
 
 	// Pack doesn't exist, create new one
 	return p.CreateEmojiPack(ctx, pack)
+}
+
+func (p *postgres) HasPermissionForPrivateEmojiGeneration(ctx context.Context, userID int64) (bool, error) {
+	var can bool
+	err := p.db.GetContext(ctx, &can, `SELECT private_generation FROM permissions WHERE user_id = $1`, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	return can, nil
 }
