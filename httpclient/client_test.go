@@ -23,7 +23,7 @@ func TestDo(t *testing.T) {
         {
             "sticker": "BQACAgIAAxUHZzXoyDT-gWfio2wrt0wtcXEH5moAAp9ZAAKHFLFJO1aXvhfhoLs2BA",
             "format": "video",
-            "emoji_list": ["🎥"]
+            "emoji_list": ["⭐️"]
 
         }
     ],

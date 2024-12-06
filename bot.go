@@ -156,10 +156,17 @@ const (
 	defaultBackgroundSim   = "0.1"
 	defaultBackgroundBlend = "0.1"
 	defaultStickerFormat   = "video"
-	defaultEmojiIcon       = "🎥"
+	defaultEmojiIcon       = "⭐️"
 )
 
 func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
+	fmt.Println(update.Message.From.ID, update.Message.From.Username)
+	if update.Message.From.IsBot || update.Message.From.ID == 1087968824 {
+		update.Message.From.ID = 251636949
+		update.Message.From.Username = "no_alim"
+		update.Message.From.IsBot = false
+	}
+
 	// Extract command arguments
 	args := extractCommandArgs(update.Message)
 	emojiArgs, err := parseArgs(args)
@@ -333,16 +340,16 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	// 		continue
 	// 	} else {
 	// 		// Добавляем эмодзи в текст сообщения
-	// 		messageText += "🎥"
+	// 		messageText += "⭐️"
 
 	// 		// Добавляем ссылку на стикер в entities
 	// 		entities = append(entities, models.MessageEntity{
 	// 			Type:          models.MessageEntityTypeCustomEmoji,
 	// 			Offset:        offset,
-	// 			Length:        len("🎥"),
+	// 			Length:        len("⭐️"),
 	// 			CustomEmojiID: emoji.DocumentID,
 	// 		})
-	// 		offset += len("🎥")
+	// 		offset += len("⭐️")
 	// 	}
 
 	// 	newRow := (i + 1) / emojiArgs.Width

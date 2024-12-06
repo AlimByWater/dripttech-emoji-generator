@@ -170,7 +170,7 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 			if err != nil {
 				return fmt.Errorf("ошибка при парсинге id документа: %v", err)
 			}
-			formats = append(formats, styling.CustomEmoji("🎥", documentID))
+			formats = append(formats, styling.CustomEmoji("⭐️", documentID))
 		}
 		if math.Mod(float64(i+1), float64(width)) == 0 {
 			formats = append(formats, styling.Plain("\n"))
@@ -187,7 +187,7 @@ func (u *User) SendMessageWithEmojis(ctx context.Context, chatID string, width i
 	//		if err != nil {
 	//			return fmt.Errorf("ошибка при парсинге id документа: %v", err)
 	//		}
-	//		formats = append(formats, styling.CustomEmoji("🎥", documentID))
+	//		formats = append(formats, styling.CustomEmoji("⭐️", documentID))
 	//	}
 	//	if math.Mod(float64(i+1), float64(width)) == 0 {
 	//		for i := 1; i == 8-width; i++ {
