@@ -416,7 +416,12 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	//	},
 	//}
 
-	topicId := fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID)
+	var topicId string
+	if update.Message.MessageThreadID != 0 {
+		topicId = fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID)
+	} else {
+		topicId = fmt.Sprintf("%d", update.Message.Chat.ID)
+	}
 	err = userBot.SendMessageWithEmojis(ctx, topicId, emojiArgs.Width, emojiArgs.PackLink, emojiArgs.RawInitCommand, selectedEmojis, update.Message.ID)
 	if err != nil {
 		slog.Error("Failed to send message with emojis", slog.String("err", err.Error()), slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID))
