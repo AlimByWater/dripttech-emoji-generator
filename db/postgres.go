@@ -205,8 +205,9 @@ func (p *postgres) HasPermissionForPrivateEmojiGeneration(ctx context.Context, u
 }
 
 func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permissions, error) {
-	var permissions types.Permissions
-	err := p.db.GetContext(ctx, &permissions, `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids FROM permissions WHERE user_id = $1`, userID)
+	var permissions []types.Permissions
+	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids FROM permissions WHERE user_id = $1`
+	rows, err := p.db.QueryContext(ctx, q, &permissions, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Permissions{}, nil
@@ -214,7 +215,22 @@ func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permiss
 		return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
 	}
 
-	return permissions, nil
+	for rows.Next() {
+		var permission types.Permissions
+		var channelIDs pq.Int64Array
+		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
+		if err != nil {
+			return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+		}
+		permission.ChannelIDs = channelIDs
+		permissions = append(permissions, permission)
+	}
+
+	if len(permissions) > 0 {
+		return permissions[0], nil
+	}
+
+	return types.Permissions{}, nil
 }
 
 func (p *postgres) PermissionsByChannelID(ctx context.Context, channelID int64) (types.Permissions, error) {
