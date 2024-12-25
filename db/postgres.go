@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"emoji-generator/types"
 	"errors"
 	"fmt"
+	"github.com/lib/pq"
 	"os"
 	"time"
 
@@ -200,4 +202,49 @@ func (p *postgres) HasPermissionForPrivateEmojiGeneration(ctx context.Context, u
 	}
 
 	return can, nil
+}
+
+func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permissions, error) {
+	var permissions types.Permissions
+	err := p.db.GetContext(ctx, &permissions, `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids FROM permissions WHERE user_id = $1`, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.Permissions{}, nil
+		}
+		return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	return permissions, nil
+}
+
+func (p *postgres) PermissionsByChannelID(ctx context.Context, channelID int64) (types.Permissions, error) {
+	var permissions []types.Permissions
+	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids
+FROM permissions
+WHERE ARRAY[$1]::bigint[] <@ channel_ids`
+
+	rows, err := p.db.QueryContext(ctx, q, channelID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.Permissions{}, nil
+		}
+		return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	for rows.Next() {
+		var permission types.Permissions
+		var channelIDs pq.Int64Array
+		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
+		if err != nil {
+			return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+		}
+		permission.ChannelIDs = channelIDs
+		permissions = append(permissions, permission)
+	}
+
+	if len(permissions) >= 1 {
+		return permissions[0], nil
+	}
+
+	return types.Permissions{}, nil
 }

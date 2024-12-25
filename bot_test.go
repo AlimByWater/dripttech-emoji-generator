@@ -5,6 +5,7 @@ import (
 	"emoji-generator/db"
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/signal"
 	"testing"
@@ -34,4 +35,11 @@ func TestCreateBlankDatabaseRecord(t *testing.T) {
 	has, err = db.Postgres.HasPermissionForPrivateEmojiGeneration(ctx, 251636949)
 	assert.NoError(t, err)
 	assert.False(t, has)
+}
+
+func TestParseArgsName(t *testing.T) {
+	emojiArgs, err := parseArgs("/emoji width=[3] name=[alim alim]")
+	require.NoError(t, err)
+
+	assert.Equal(t, "alim alim", emojiArgs.SetName)
 }

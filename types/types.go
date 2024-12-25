@@ -76,7 +76,8 @@ type EmojiCommand struct {
 
 	WorkingDir string
 
-	NewSet bool
+	NewSet      bool
+	Permissions Permissions
 }
 
 func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {

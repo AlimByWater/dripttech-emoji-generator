@@ -83,14 +83,14 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 }
 
 func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Update) {
-	has, err := db.Postgres.HasPermissionForPrivateEmojiGeneration(ctx, update.Message.From.ID)
+	permissions, err := db.Postgres.Permissions(ctx, update.Message.From.ID)
 	if err != nil {
-		slog.Error("Failed to check permission for private emoji generation", slog.String("err", err.Error()))
+		slog.Error("Failed to get permissions", slog.String("err", err.Error()))
 		sendMessageByBot(ctx, b, update, "Возникла внутреняя ошибка. Попробуйте позже")
 		return
 	}
 
-	if !has {
+	if !permissions.PrivateGeneration {
 		sendMessageByBot(ctx, b, update, "Вы не можете создавать паки в личном чате. Возможно когда-нибудь...")
 		return
 	}
@@ -103,6 +103,8 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 		sendMessageByBot(ctx, b, update, err.Error())
 		return
 	}
+
+	emojiArgs.Permissions = permissions
 
 	if update.Message.From.IsBot || update.Message.From.ID < 0 {
 		sendMessageByBot(ctx, b, update, "Создать пак можно только с личного аккаунта")
@@ -327,18 +329,39 @@ const (
 )
 
 func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
+	//j, _ := json.MarshalIndent(update, "", "  ")
+	//fmt.Println(string(j))
 	fmt.Println(update.Message.From.ID, update.Message.From.Username)
-	if update.Message.From.ID == 1087968824 {
-		if update.Message.Chat.ID == -1002002718381 {
-			update.Message.From.ID = 61049030
-			update.Message.From.Username = "ACKETC"
-			update.Message.From.IsBot = false
+	var permissions types.Permissions
+	var err error
+	if update.Message.From.Username == "Channel_Bot" || update.Message.From.ID == 1087968824 {
+		var id int64
+		if update.Message.From.Username == "Channel_Bot" {
+			id = update.Message.SenderChat.ID
+		} else if update.Message.From.ID == 1087968824 {
+			id = update.Message.From.ID
 		}
 
-		if update.Message.Chat.ID == -1002400904088 || update.Message.Chat.ID == -1002491830452 {
+		permissions, err = db.Postgres.PermissionsByChannelID(ctx, id)
+		if err != nil {
+			slog.Error("Failed to get permissions by channel", slog.String("err", err.Error()))
+			sendMessageByBot(ctx, b, update, "Возникла внутреняя ошибка. Попробуйте позже")
+			return
+		}
+
+		if permissions.UseByChannelName && slices.Contains(permissions.ChannelIDs, update.Message.SenderChat.ID) {
 			update.Message.From.ID = 251636949
-			update.Message.From.Username = "no_alim"
 			update.Message.From.IsBot = false
+		} else {
+			sendMessageByBot(ctx, b, update, "Вы не можете создать пак от лица канала.")
+			return
+		}
+	} else {
+		permissions, err = db.Postgres.Permissions(ctx, update.Message.From.ID)
+		if err != nil {
+			slog.Error("Failed to get permissions", slog.String("err", err.Error()))
+			sendMessageByBot(ctx, b, update, "Возникла внутреняя ошибка. Попробуйте позже")
+			return
 		}
 	}
 
@@ -350,6 +373,8 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		sendErrorMessage(ctx, update, update.Message.Chat.ID, err.Error())
 		return
 	}
+
+	emojiArgs.Permissions = permissions
 
 	if update.Message.From.IsBot || update.Message.From.ID < 0 {
 		sendErrorMessage(ctx, update, update.Message.Chat.ID, "Создать пак можно только с личного аккаунта")
@@ -640,14 +665,20 @@ func setupEmojiCommand(args *types.EmojiCommand, msg *models.Message) {
 	if args.BackgroundBlend == "" {
 		args.BackgroundBlend = defaultBackgroundBlend
 	}
+
 	if args.SetName == "" {
 		args.SetName = strings.TrimSpace(types.PackTitleTempl)
 	} else {
-		if len(args.SetName) > types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl) {
-			args.SetName = args.SetName[:types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl)]
-		}
-		args.SetName = fmt.Sprintf(`%s
+		if args.Permissions.PackNameWithoutPrefix {
+			args.SetName = strings.TrimSpace(args.SetName)
+		} else {
+			if len(args.SetName) > types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl) {
+				args.SetName = args.SetName[:types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl)]
+			}
+			args.SetName = fmt.Sprintf(`%s
 %s`, args.SetName, types.PackTitleTempl)
+		}
+
 	}
 
 	// Setup working directory and user info
@@ -773,33 +804,37 @@ func handleDownloadError(ctx context.Context, b *bot.Bot, update *models.Update,
 func parseArgs(arg string) (*types.EmojiCommand, error) {
 	var emojiArgs types.EmojiCommand
 	emojiArgs.RawInitCommand = "/emoji " + arg
-	// Разбиваем строку на части, учитывая как пробелы, так и возможные аргументы в квадратных скобках
+
+	if arg == "" {
+		return &emojiArgs, nil
+	}
+
 	var args []string
-	parts := strings.Fields(arg)
+	currentArg := ""
+	inBrackets := false
 
-	for _, part := range parts {
-		if strings.Contains(part, "[") && strings.Contains(part, "]") {
-			// Извлекаем имя параметра и значение из формата param=[value]
-			paramStart := strings.Index(part, "=")
-			if paramStart == -1 {
-				continue
+	// Проходим по строке посимвольно для корректной обработки значений в скобках
+	for i := 0; i < len(arg); i++ {
+		switch arg[i] {
+		case '[':
+			inBrackets = true
+		case ']':
+			inBrackets = false
+		case ' ':
+			if !inBrackets {
+				if currentArg != "" {
+					args = append(args, currentArg)
+					currentArg = ""
+				}
+			} else {
+				currentArg += string(arg[i])
 			}
-
-			key := strings.ToLower(part[:paramStart])
-			// Извлекаем значение между [ и ]
-			valueStart := strings.Index(part, "[")
-			valueEnd := strings.Index(part, "]")
-			if valueStart == -1 || valueEnd == -1 || valueStart >= valueEnd {
-				slog.Error("Invalid arguments", slog.String("err", "Invalid format"), slog.String("arg", part))
-				continue
-			}
-
-			value := part[valueStart+1 : valueEnd]
-			args = append(args, key+"="+value)
-		} else {
-			// Обрабатываем обычный формат param=value
-			args = append(args, part)
+		default:
+			currentArg += string(arg[i])
 		}
+	}
+	if currentArg != "" {
+		args = append(args, currentArg)
 	}
 
 	for _, arg := range args {

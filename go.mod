@@ -10,7 +10,7 @@ require (
 	github.com/go-telegram/bot v1.10.1
 	github.com/gotd/td v0.102.0
 	github.com/joho/godotenv v1.5.1
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 )
 
 require (
