@@ -1,4 +1,4 @@
-package main
+package processing
 
 import (
 	"emoji-generator/types"
@@ -63,7 +63,7 @@ type processResult struct {
 	err      error
 }
 
-func processVideo(args *types.EmojiCommand) ([]string, error) {
+func ProcessVideo(args *types.EmojiCommand) ([]string, error) {
 	width, height, err := getVideoDimensions(args.DownloadedFile)
 	if err != nil {
 		return nil, err
@@ -220,7 +220,7 @@ func worker(jobs <-chan tile, results chan<- processResult, wg *sync.WaitGroup) 
 	}
 }
 
-func removeDirectory(directory string) error {
+func RemoveDirectory(directory string) error {
 	return os.RemoveAll(directory)
 }
 

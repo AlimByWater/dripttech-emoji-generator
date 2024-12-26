@@ -12,6 +12,7 @@ import (
 	"github.com/celestix/gotgproto/sessionMaker"
 	"github.com/glebarez/sqlite"
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/tg"
@@ -24,7 +25,8 @@ import (
 	"time"
 )
 
-type emojiDmHandler interface {
+type AddEmojier interface {
+	AddEmojis(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiFiles []string) (*models.StickerSet, [][]types.EmojiMeta, error)
 }
 
 type User struct {

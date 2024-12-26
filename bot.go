@@ -102,7 +102,7 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 
 	// Extract command arguments
 	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
-	emojiArgs, err := parseArgs(args)
+	emojiArgs, err := processing.ParseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
 		sendMessageByBot(ctx, b, update, err.Error())
@@ -122,7 +122,7 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 		return
 	}
 
-	emojiPack, err := setupPackDetails(ctx, emojiArgs, botInfo)
+	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, botInfo.Username)
 	if err != nil {
 		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
 		sendMessageByBot(ctx, b, update, "пак с подобной ссылкой не найден")
@@ -166,10 +166,10 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 
 	for {
 		// Обрабатываем видео
-		createdFiles, err := processVideo(emojiArgs)
+		createdFiles, err := processing.ProcessVideo(emojiArgs)
 		if err != nil {
 			slog.LogAttrs(ctx, slog.LevelError, "Ошибка при обработке видео", emojiArgs.ToSlogAttributes(slog.String("err", err.Error()))...)
-			err2 := removeDirectory(emojiArgs.WorkingDir)
+			err2 := processing.RemoveDirectory(emojiArgs.WorkingDir)
 			if err2 != nil {
 				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
 			}
@@ -178,7 +178,7 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 		}
 
 		// Создаем набор стикеров
-		stickerSet, _, err = addEmojis(ctx, b, emojiArgs, createdFiles)
+		stickerSet, _, err = AddEmojis(ctx, b, emojiArgs, createdFiles)
 		if err != nil {
 			if strings.Contains(err.Error(), "PEER_ID_INVALID") || strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "bot was blocked by the user") {
 				sendInitMessage(update.Message.Chat.ID, update.Message.ID)
@@ -365,7 +365,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 
 	// Extract command arguments
 	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
-	emojiArgs, err := parseArgs(args)
+	emojiArgs, err := processing.ParseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
 		sendErrorMessage(ctx, update, update.Message.Chat.ID, err.Error())
@@ -401,7 +401,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 
-	emojiPack, err := setupPackDetails(ctx, emojiArgs, botInfo)
+	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, botInfo.Username)
 	if err != nil {
 		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
 		sendErrorMessage(ctx, update, update.Message.Chat.ID, "пак с подобной ссылкой не найден")
@@ -432,10 +432,10 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 
 	for {
 		// Обрабатываем видео
-		createdFiles, err := processVideo(emojiArgs)
+		createdFiles, err := processing.ProcessVideo(emojiArgs)
 		if err != nil {
 			slog.LogAttrs(ctx, slog.LevelError, "Ошибка при обработке видео", emojiArgs.ToSlogAttributes(slog.String("err", err.Error()))...)
-			err2 := removeDirectory(emojiArgs.WorkingDir)
+			err2 := processing.RemoveDirectory(emojiArgs.WorkingDir)
 			if err2 != nil {
 				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
 			}
@@ -444,7 +444,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		}
 
 		// Создаем набор стикеров
-		stickerSet, emojiMetaRows, err = addEmojis(ctx, b, emojiArgs, createdFiles)
+		stickerSet, emojiMetaRows, err = AddEmojis(ctx, b, emojiArgs, createdFiles)
 		if err != nil {
 			if strings.Contains(err.Error(), "PEER_ID_INVALID") || strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "bot was blocked by the user") {
 				sendInitMessage(update.Message.Chat.ID, update.Message.ID)
@@ -642,39 +642,6 @@ func sendErrorMessage(ctx context.Context, u *models.Update, chatID int64, errTo
 
 }
 
-func setupPackDetails(ctx context.Context, args *types.EmojiCommand, botInfo *models.User) (*db.EmojiPack, error) {
-	if strings.Contains(args.PackLink, botInfo.Username) {
-		return handleExistingPack(ctx, args)
-	}
-	return nil, handleNewPack(args, botInfo)
-}
-
-func handleExistingPack(ctx context.Context, args *types.EmojiCommand) (*db.EmojiPack, error) {
-	args.NewSet = false
-	if strings.Contains(args.PackLink, "t.me/addemoji/") {
-		splited := strings.Split(args.PackLink, ".me/addemoji/")
-		args.PackLink = strings.TrimSpace(splited[len(splited)-1])
-	}
-
-	pack, err := db.Postgres.GetEmojiPackByPackLink(ctx, args.PackLink)
-	if err != nil {
-		return nil, err
-	}
-	args.SetName = ""
-	return pack, nil
-}
-
-func handleNewPack(args *types.EmojiCommand, botInfo *models.User) error {
-	args.NewSet = true
-	packName := fmt.Sprintf("%s%d_by_%s", "dt", time.Now().Unix(), botInfo.Username)
-	if len(packName) > types.TelegramPackLinkAndNameLength {
-		args.PackLink = args.PackLink[:len(packName)-types.TelegramPackLinkAndNameLength]
-		packName = fmt.Sprintf("%s_%s", args.PackLink, botInfo.Username)
-	}
-	args.PackLink = packName
-	return nil
-}
-
 func createDatabaseRecord(ctx context.Context, args *types.EmojiCommand, initialCommand string, botUsername string) (*db.EmojiPack, error) {
 	emojiPack := &db.EmojiPack{
 		CreatorID:      args.UserID,
@@ -752,92 +719,6 @@ func handleDownloadError(ctx context.Context, b *bot.Bot, update *models.Update,
 		message = "Ошибка при загрузке файла"
 	}
 	sendErrorMessage(ctx, update, update.Message.Chat.ID, message)
-}
-
-func parseArgs(arg string) (*types.EmojiCommand, error) {
-	var emojiArgs types.EmojiCommand
-	emojiArgs.RawInitCommand = "/emoji " + arg
-
-	if arg == "" {
-		return &emojiArgs, nil
-	}
-
-	var args []string
-	currentArg := ""
-	inBrackets := false
-
-	// Проходим по строке посимвольно для корректной обработки значений в скобках
-	for i := 0; i < len(arg); i++ {
-		switch arg[i] {
-		case '[':
-			inBrackets = true
-		case ']':
-			inBrackets = false
-		case ' ':
-			if !inBrackets {
-				if currentArg != "" {
-					args = append(args, currentArg)
-					currentArg = ""
-				}
-			} else {
-				currentArg += string(arg[i])
-			}
-		default:
-			currentArg += string(arg[i])
-		}
-	}
-	if currentArg != "" {
-		args = append(args, currentArg)
-	}
-
-	for _, arg := range args {
-		parts := strings.SplitN(arg, "=", 2)
-		if len(parts) != 2 {
-			continue // Пропускаем несуществующий аргумент
-		}
-
-		key := strings.ToLower(parts[0])
-		value := parts[1]
-
-		// Определяем стандартный ключ из алиаса
-		standardKey, exists := types.ArgAlias[key]
-		if !exists {
-			continue // Пропускаем несуществующий аргумент
-		}
-
-		// Обрабатываем аргумент в зависимости от стандартного ключа
-		switch standardKey {
-		case "width":
-			width, err := strconv.Atoi(value)
-			if err != nil {
-				continue
-			}
-			emojiArgs.Width = width
-		case "name":
-			emojiArgs.SetName = strings.TrimSpace(value)
-		case "background":
-			emojiArgs.BackgroundColor = ColorToHex(value)
-		case "background_blend":
-			value = strings.ReplaceAll(value, ",", ".")
-			emojiArgs.BackgroundBlend = value
-		case "background_sim":
-			value = strings.ReplaceAll(value, ",", ".")
-			emojiArgs.BackgroundSim = value
-		case "link":
-			emojiArgs.PackLink = value
-		case "iphone":
-			if value != "true" && value != "false" {
-				continue
-			}
-			emojiArgs.Iphone = value == "true"
-		}
-	}
-
-	if (emojiArgs.BackgroundSim != "" || emojiArgs.BackgroundBlend != "") && emojiArgs.BackgroundColor == "" {
-		return &emojiArgs, types.ErrInvalidBackgroundArgumentsUse
-	}
-
-	return &emojiArgs, nil
 }
 
 func downloadFile(ctx context.Context, b *bot.Bot, m *models.Message, args *types.EmojiCommand) (string, error) {
@@ -964,7 +845,7 @@ func uploadSticker(ctx context.Context, b *bot.Bot, userID int64, filename strin
 	}
 }
 
-func addEmojis(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiFiles []string) (*models.StickerSet, [][]types.EmojiMeta, error) {
+func AddEmojis(ctx context.Context, b *bot.Bot, args *types.EmojiCommand, emojiFiles []string) (*models.StickerSet, [][]types.EmojiMeta, error) {
 	if err := validateEmojiFiles(emojiFiles); err != nil {
 		return nil, nil, err
 	}
@@ -1371,20 +1252,4 @@ func uploadEmojiFiles(ctx context.Context, b *bot.Bot, args *types.EmojiCommand,
 	}
 
 	return emojiFileIDs, emojiMetaRows, nil
-}
-
-func ColorToHex(colorName string) string {
-	if colorName == "" {
-		return ""
-	}
-	if hex, exists := types.ColorMap[strings.ToLower(colorName)]; exists {
-		return hex
-	}
-
-	// Если это уже hex формат или неизвестный цвет, возвращаем как есть
-	if strings.HasPrefix(colorName, "0x") {
-		return colorName
-	}
-
-	return "0x000000" // возвращаем черный по умолчанию
 }
