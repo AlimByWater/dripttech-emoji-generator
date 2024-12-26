@@ -36,13 +36,14 @@ func InitializeAllBots(userbot UserBot) error {
 		if err != nil {
 			return fmt.Errorf("error creating production bot: %w", err)
 		}
-
+		slog.Info("Production bot initialized")
 		vipBot, err := NewDripBot(os.Getenv("VIP_BOT_TOKEN"), userbot)
 		if err != nil {
 			prodBot.Shutdown(context.Background())
 			return fmt.Errorf("error creating vip bot: %w", err)
 		}
 
+		slog.Info("VIP bot initialized")
 		bots[prodBot.tgbotApi.Self.UserName] = prodBot
 		bots[vipBot.tgbotApi.Self.UserName] = vipBot
 	}

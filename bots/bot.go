@@ -157,7 +157,7 @@ func (d *DripBot) handler(ctx context.Context, b *bot.Bot, update *models.Update
 }
 
 func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-
+	fmt.Println(update.Message.From.ID)
 	if update.Message.Chat.Type == models.ChatTypePrivate {
 		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, d.tgbotApi.Self.UserName)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
