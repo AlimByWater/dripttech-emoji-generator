@@ -3,107 +3,76 @@ package main
 import (
 	"context"
 	"emoji-generator/db"
-	"emoji-generator/httpclient"
 	userbot "emoji-generator/mtproto"
-	"github.com/go-telegram/bot/models"
+	"github.com/joho/godotenv"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
-	"time"
-
-	tgbotapi "github.com/OvyFlash/telegram-bot-api"
-	"github.com/go-telegram/bot"
-	"golang.org/x/time/rate"
-
-	"github.com/joho/godotenv"
 )
 
-var userBot *userbot.User
-var tgbotApi *tgbotapi.BotAPI
-var wg sync.WaitGroup
-var env string
-var token string
-
 func main() {
-	env = os.Getenv("ENV")
-	slog.Info("Запуск Bot...", slog.String("ENV", env))
+	slog.Info("Starting Bots...")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
-		log.Fatalf("Ошибка загрузки файла с переменными окружения: %v", err)
+		log.Fatalf("Error loading env file: %v", err)
 	}
 
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	err := db.Init()
 	if err != nil {
-		log.Fatalf("Ошибка инициализации БД: %v", err)
+		log.Fatalf("Error initializing DB: %v", err)
 	}
 	slog.Info("postgres initialized")
 
-	rl := rate.NewLimiter(rate.Every(1*time.Second), 100)
-	c := httpclient.NewClient(rl)
-
-	userBot = userbot.NewBot()
+	// Initialize UserBot
+	userBot := userbot.NewBot()
 	err = userBot.Init(ctx)
 	if err != nil {
-		log.Fatalf("Ошибка при создании бота: %v", err)
+		log.Fatalf("Error initializing UserBot: %v", err)
 	}
 	slog.Info("UserBot initialized")
 
-	token = os.Getenv("BOT_TOKEN")
-	if env == "test" {
-		token = os.Getenv("TEST_BOT_TOKEN")
+	var bots []*DripBot
+
+	if os.Getenv("ENV") == "test" {
+		var testBot *DripBot
+		if testToken := os.Getenv("TEST_BOT_TOKEN"); testToken != "" {
+			testBot, err = NewDripBot(testToken, userBot)
+			if err != nil {
+				log.Fatalf("Error creating test bot: %v", err)
+			}
+			slog.Info("Test bot initialized")
+		}
+
+		bots = append(bots, testBot)
+	} else {
+		// Initialize production bot
+		prodBot, err := NewDripBot(os.Getenv("BOT_TOKEN"), userBot)
+		if err != nil {
+			log.Fatalf("Error creating production bot: %v", err)
+		}
+		bots = append(bots, prodBot)
 	}
 
-	b, err := bot.New(token,
-		bot.WithDefaultHandler(handlerWithWG),
-		bot.WithHTTPClient(time.Minute, c))
-	if err != nil {
-		log.Fatalf("Ошибка при создании бота: %v", err)
+	for _, bot := range bots {
+		go bot.Start(ctx)
 	}
-
-	tgbotApi, err = tgbotapi.NewBotAPI(token)
-	if err != nil {
-		log.Fatalf("Ошибка при создании бота tgbotapi: %v", err)
-	}
-
-	tgbotApi.StopReceivingUpdates()
-
-	// Запускаем бота
-	b.Start(ctx)
 
 	<-ctx.Done()
-	slog.Info("Получен сигнал завершения, ожидаем завершения текущих задач...")
+	slog.Info("Received shutdown signal, waiting for current tasks to complete...")
 
-	// Ждем завершения всех текущих задач
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	// Ждем завершения задач с таймаутом
-	select {
-	case <-done:
-		slog.Info("Все задачи успешно завершены")
-	case <-time.After(30 * time.Second):
-		slog.Warn("Превышено время ожидания завершения задач")
+	// Shutdown bots
+	for _, bot := range bots {
+		bot.Shutdown(ctx)
 	}
 
 	userBot.Shutdown(ctx)
 	db.Postgres.Shutdown()
-	slog.Info("Bot stopped")
-}
-
-func handlerWithWG(ctx context.Context, b *bot.Bot, update *models.Update) {
-	wg.Add(1)
-	defer wg.Done()
-
-	handler(ctx, b, update)
+	slog.Info("All bots stopped")
 }

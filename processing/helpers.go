@@ -5,6 +5,7 @@ import (
 	"emoji-generator/db"
 	"emoji-generator/types"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -194,4 +195,34 @@ func ColorToHex(colorName string) string {
 	}
 
 	return "0x000000" // возвращаем черный по умолчанию
+}
+
+// validateEmojiFiles проверяет корректность входных файлов
+func ValidateEmojiFiles(emojiFiles []string) error {
+	if len(emojiFiles) == 0 {
+		return fmt.Errorf("нет файлов для создания набора")
+	}
+
+	if len(emojiFiles) > types.MaxStickersTotal {
+		return fmt.Errorf("слишком много файлов для создания набора (максимум %d)", types.MaxStickersTotal)
+	}
+
+	return nil
+}
+
+func PrepareTransparentData(width int) ([]byte, error) {
+	// Подготавливаем прозрачные стикеры если нужно
+	transparentSpacing := types.DefaultWidth - width
+	transparentData, err := os.ReadFile("transparent.webm")
+	if err != nil || transparentSpacing <= 0 {
+		return nil, nil
+	} else if transparentSpacing > 0 {
+		transparentData, err = os.ReadFile("transparent.webm")
+		if err != nil {
+			return nil, fmt.Errorf("open transparent file: %w", err)
+		}
+		return transparentData, nil
+	}
+
+	return nil, nil
 }
