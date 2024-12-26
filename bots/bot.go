@@ -157,7 +157,7 @@ func (d *DripBot) handler(ctx context.Context, b *bot.Bot, update *models.Update
 }
 
 func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-	fmt.Println(update.Message.From.ID)
+
 	if update.Message.Chat.Type == models.ChatTypePrivate {
 		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, d.tgbotApi.Self.UserName)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -200,7 +200,7 @@ func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *mo
 				Text:   "Можешь делать паки",
 			})
 
-		} else if d.tgbotApi.Self.UserName != types.VIP_BOT_USERNAME {
+		} else if d.tgbotApi.Self.UserName == types.VIP_BOT_USERNAME {
 			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID: update.Message.Chat.ID,
 				Text:   "Добро пожаловать на сервер.\nЯ ⁂VIP бот, а это значит:\n ⁂ Твои запросы обрабатываются вне очереди\n ⁂ Ты можешь получать готовые эмодзи-композиции в ЛС\n ⁂ Ты можешь именовать паки без префикса (параметр name=[])\n⁂ пока что все",
