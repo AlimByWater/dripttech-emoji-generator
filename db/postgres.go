@@ -207,12 +207,12 @@ func (p *postgres) HasPermissionForPrivateEmojiGeneration(ctx context.Context, u
 func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permissions, error) {
 	var permissions []types.Permissions
 	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids FROM permissions WHERE user_id = $1`
-	rows, err := p.db.QueryContext(ctx, q, &permissions, userID)
+	rows, err := p.db.QueryContext(ctx, q, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Permissions{}, nil
 		}
-		return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+		return types.Permissions{}, fmt.Errorf("failed to query permissions by user: %w", err)
 	}
 
 	for rows.Next() {
@@ -220,7 +220,7 @@ func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permiss
 		var channelIDs pq.Int64Array
 		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
 		if err != nil {
-			return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+			return types.Permissions{}, fmt.Errorf("failed to scan permissions: %w", err)
 		}
 		permission.ChannelIDs = channelIDs
 		permissions = append(permissions, permission)
@@ -244,7 +244,7 @@ WHERE ARRAY[$1]::bigint[] <@ channel_ids`
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Permissions{}, nil
 		}
-		return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+		return types.Permissions{}, fmt.Errorf("failed to query permissions by channel: %w", err)
 	}
 
 	for rows.Next() {
@@ -252,7 +252,7 @@ WHERE ARRAY[$1]::bigint[] <@ channel_ids`
 		var channelIDs pq.Int64Array
 		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
 		if err != nil {
-			return types.Permissions{}, fmt.Errorf("failed to check if user exists: %w", err)
+			return types.Permissions{}, fmt.Errorf("failed to scan permissions: %w", err)
 		}
 		permission.ChannelIDs = channelIDs
 		permissions = append(permissions, permission)
