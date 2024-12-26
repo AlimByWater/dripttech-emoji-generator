@@ -7,4 +7,5 @@ type Permissions struct {
 	UseInGroups           bool    `json:"use_in_groups" db:"use_in_groups"`
 	UseByChannelName      bool    `json:"use_by_channel_name" db:"use_by_channel_name"`
 	ChannelIDs            []int64 `json:"channel_ids" db:"channel_ids"`
+	Vip                   bool    `json:"vip" db:"vip"`
 }

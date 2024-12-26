@@ -206,7 +206,7 @@ func (p *postgres) HasPermissionForPrivateEmojiGeneration(ctx context.Context, u
 
 func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permissions, error) {
 	var permissions []types.Permissions
-	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids FROM permissions WHERE user_id = $1`
+	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids, vip FROM permissions WHERE user_id = $1`
 	rows, err := p.db.QueryContext(ctx, q, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -218,7 +218,7 @@ func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permiss
 	for rows.Next() {
 		var permission types.Permissions
 		var channelIDs pq.Int64Array
-		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
+		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs, &permission.Vip)
 		if err != nil {
 			return types.Permissions{}, fmt.Errorf("failed to scan permissions: %w", err)
 		}
@@ -235,7 +235,7 @@ func (p *postgres) Permissions(ctx context.Context, userID int64) (types.Permiss
 
 func (p *postgres) PermissionsByChannelID(ctx context.Context, channelID int64) (types.Permissions, error) {
 	var permissions []types.Permissions
-	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids
+	q := `SELECT user_id, private_generation, pack_name_without_prefix, use_in_groups, use_by_channel_name, channel_ids, vip
 FROM permissions
 WHERE ARRAY[$1]::bigint[] <@ channel_ids`
 
@@ -250,7 +250,7 @@ WHERE ARRAY[$1]::bigint[] <@ channel_ids`
 	for rows.Next() {
 		var permission types.Permissions
 		var channelIDs pq.Int64Array
-		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs)
+		err := rows.Scan(&permission.UserID, &permission.PrivateGeneration, &permission.PackNameWithoutPrefix, &permission.UseInGroups, &permission.UseByChannelName, &channelIDs, &permission.Vip)
 		if err != nil {
 			return types.Permissions{}, fmt.Errorf("failed to scan permissions: %w", err)
 		}

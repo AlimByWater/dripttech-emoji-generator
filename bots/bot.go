@@ -1,4 +1,4 @@
-package main
+package bots
 
 import (
 	"bytes"
@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"emoji-generator/db"
 	"emoji-generator/httpclient"
-	userbot "emoji-generator/mtproto"
 	"emoji-generator/processing"
 	"emoji-generator/queue"
 	"emoji-generator/types"
@@ -33,17 +32,22 @@ var (
 	validchatIDs = []string{"-1002400904088_3", "-1002491830452_3", "-1002002718381"}
 )
 
+type UserBot interface {
+	SendMessageWithEmojis(ctx context.Context, chatID string, width int, packLink string, command string, emojis []types.EmojiMeta, replyTo int) error
+	SendMessage(ctx context.Context, chatID string, msg bot.SendMessageParams) error
+}
+
 type DripBot struct {
 	bot              *bot.Bot
 	tgbotApi         *tgbotapi.BotAPI
-	userBot          *userbot.User
+	userBot          UserBot
 	token            string
 	wg               sync.WaitGroup
 	stickerQueue     *queue.StickerQueue
 	messagesToDelete sync.Map
 }
 
-func NewDripBot(token string, userBot *userbot.User) (*DripBot, error) {
+func NewDripBot(token string, userBot UserBot) (*DripBot, error) {
 	rl := rate.NewLimiter(rate.Every(1*time.Second), 100)
 	c := httpclient.NewClient(rl)
 
@@ -64,7 +68,7 @@ func NewDripBot(token string, userBot *userbot.User) (*DripBot, error) {
 		return nil, fmt.Errorf("error creating bot: %w", err)
 	}
 
-	tgbotApi, err := tgbotapi.NewBotAPI(token)
+	tgbotApi, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, c)
 	if err != nil {
 		return nil, fmt.Errorf("error creating tgbotapi: %w", err)
 	}
@@ -78,8 +82,7 @@ func NewDripBot(token string, userBot *userbot.User) (*DripBot, error) {
 }
 
 func (d *DripBot) Start(ctx context.Context) {
-	botCtx := context.WithValue(ctx, "dripbot", d)
-	d.bot.Start(botCtx)
+	d.bot.Start(ctx)
 }
 
 func (d *DripBot) Shutdown(ctx context.Context) {
@@ -95,6 +98,10 @@ func (d *DripBot) Shutdown(ctx context.Context) {
 	case <-time.After(30 * time.Second):
 		slog.Warn("Timeout waiting for handlers to complete")
 	}
+}
+
+func (d *DripBot) BotUserName() string {
+	return d.tgbotApi.Self.UserName
 }
 
 func (d *DripBot) handler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -149,170 +156,10 @@ func (d *DripBot) handler(ctx context.Context, b *bot.Bot, update *models.Update
 	}
 }
 
-func HandleEmojiCommandFromUserBotDM(ctx context.Context) {
-	//permissionsm
-}
-
-func (d *DripBot) handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Update) {
-	permissions, err := db.Postgres.Permissions(ctx, update.Message.From.ID)
-	if err != nil {
-		slog.Error("Failed to get permissions", slog.String("err", err.Error()))
-		d.sendMessageByBot(ctx, update, "Возникла внутреняя ошибка. Попробуйте позже")
-		return
-	}
-
-	if !permissions.PrivateGeneration {
-		d.sendMessageByBot(ctx, update, "Вы не можете создавать паки в личном чате. Возможно когда-нибудь...")
-		return
-	}
-
-	// Extract command arguments
-	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
-	emojiArgs, err := processing.ParseArgs(args)
-	if err != nil {
-		slog.Error("Invalid arguments", slog.String("err", err.Error()))
-		d.sendMessageByBot(ctx, update, err.Error())
-		return
-	}
-
-	emojiArgs.Permissions = permissions
-
-	// Setup command defaults and working environment
-	processing.SetupEmojiCommand(emojiArgs, update.Message.From.ID, update.Message.From.Username)
-
-	// Get bot info and setup pack details
-	botInfo, err := b.GetMe(ctx)
-	if err != nil {
-		slog.Error("Failed to get bot info", slog.String("err", err.Error()))
-		d.sendMessageByBot(ctx, update, "Не удалось получить информацию о боте")
-		return
-	}
-
-	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, botInfo.Username)
-	if err != nil {
-		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
-		d.sendMessageByBot(ctx, update, "пак с подобной ссылкой не найден")
-		return
-	}
-
-	// Create working directory and download file
-	if err := d.prepareWorkingEnvironment(ctx, update, emojiArgs); err != nil {
-		slog.Error("Failed to download file", slog.String("err", err.Error()))
-		var message string
-		switch err {
-		case types.ErrFileNotProvided:
-			message = "Нужен файл для создания эмодзи"
-		case types.ErrFileOfInvalidType:
-			message = "Неподдерживаемый тип файла. Поддерживаются: GIF, JPEG, PNG, WebP, MP4, WebM, MPEG"
-		case types.ErrGetFileFromTelegram:
-			message = "Не удалось получить файл из Telegram"
-		case types.ErrFileDownloadFailed:
-			message = "Ошибка при загрузке файла"
-		default:
-			message = "Ошибка при загрузке файла"
-		}
-		d.sendMessageByBot(ctx, update, message)
-		return
-	}
-
-	if emojiPack == nil {
-		// Create database record
-		emojiPack, err = d.createDatabaseRecord(ctx, emojiArgs, args, botInfo.Username)
-		if err != nil {
-			slog.Error("Failed to log emoji command",
-				slog.String("err", err.Error()),
-				slog.String("pack_link", emojiArgs.PackLink),
-				slog.Int64("user_id", emojiArgs.UserID))
-			d.sendMessageByBot(ctx, update, "Не удалось создать запись в базе данных")
-			return
-		}
-	}
-
-	var stickerSet *models.StickerSet
-
-	for {
-		// Обрабатываем видео
-		createdFiles, err := processing.ProcessVideo(emojiArgs)
-		if err != nil {
-			slog.LogAttrs(ctx, slog.LevelError, "Ошибка при обработке видео", emojiArgs.ToSlogAttributes(slog.String("err", err.Error()))...)
-			err2 := processing.RemoveDirectory(emojiArgs.WorkingDir)
-			if err2 != nil {
-				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
-			}
-			d.sendMessageByBot(ctx, update, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
-			return
-		}
-
-		// Создаем набор стикеров
-		stickerSet, _, err = d.AddEmojis(ctx, emojiArgs, createdFiles)
-		if err != nil {
-			if strings.Contains(err.Error(), "PEER_ID_INVALID") || strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "bot was blocked by the user") {
-				d.sendInitMessage(update.Message.Chat.ID, update.Message.ID)
-				// TODO implement later
-				//messagesToDelete.Store(update.Message.From.ID, update.Message.ID)
-				return
-
-			}
-
-			if strings.Contains(err.Error(), "STICKER_VIDEO_BIG") {
-				emojiArgs.QualityValue++
-				continue
-			}
-
-			if strings.Contains(err.Error(), "STICKERSET_INVALID") {
-				d.sendMessageByBot(ctx, update, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
-				return
-			}
-
-			if strings.Contains(err.Error(), "retry_after") {
-				parts := strings.Split(err.Error(), "retry_after ")
-				var waitTime int
-				if len(parts) >= 2 {
-					if wt, parseErr := strconv.Atoi(strings.TrimSpace(parts[1])); parseErr == nil {
-						waitTime = wt
-					}
-				}
-
-				if waitTime > 0 {
-					dur := time.Duration(waitTime * int(time.Second))
-					d.sendMessageByBot(ctx, update, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
-					return
-				}
-			}
-
-			d.sendMessageByBot(ctx, update, fmt.Sprintf("%s", err.Error()))
-			return
-		}
-
-		break
-	}
-
-	// Обновляем количество эмодзи в базе данных
-	if err := db.Postgres.SetEmojiCount(ctx, emojiPack.ID, len(stickerSet.Stickers)); err != nil {
-		slog.Error("Failed to update emoji count",
-			slog.String("err", err.Error()),
-			slog.String("pack_link", emojiArgs.PackLink),
-			slog.Int64("user_id", emojiArgs.UserID))
-	}
-
-	d.sendMessageByBot(ctx, update, fmt.Sprintf("Ваш пак\n%s", "https://t.me/addemoji/"+emojiArgs.PackLink))
-
-}
-
 func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-	if update.Message.Chat.Type == models.ChatTypePrivate {
-		me, err := b.GetMe(ctx)
-		if err != nil {
-			slog.Error("Failed to get bot info", slog.String("err", err.Error()))
-			_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   "Возникла ошибка при получении информации о боте",
-			})
-			slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
-			return
-		}
 
-		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, me.Username)
+	if update.Message.Chat.Type == models.ChatTypePrivate {
+		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, d.tgbotApi.Self.UserName)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("Failed to check if user exists", slog.String("err", err.Error()))
 			_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
@@ -324,7 +171,7 @@ func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *mo
 		}
 
 		if !exist {
-			err = d.createBlankDatabaseRecord(ctx, me.Username, update.Message.From.ID)
+			err = d.createBlankDatabaseRecord(ctx, d.tgbotApi.Self.UserName, update.Message.From.ID)
 			if err != nil {
 				slog.Error("Failed to create blank database record", slog.String("err", err.Error()))
 				_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
@@ -347,10 +194,18 @@ func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *mo
 			}
 		}
 
-		_, err = b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
-			Text:   "Можешь делать паки",
-		})
+		if d.tgbotApi.Self.UserName == types.BOT_USERNAME || d.tgbotApi.Self.UserName == types.TEST_BOT_USERNAME {
+			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Можешь делать паки",
+			})
+
+		} else if d.tgbotApi.Self.UserName != types.VIP_BOT_USERNAME {
+			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Добро пожаловать на сервер.\nЯ ⁂VIP бот, а это значит:\n ⁂ Твои запросы обрабатываются вне очереди\n ⁂ Ты можешь получать готовые эмодзи-композиции в ЛС\n ⁂ Ты можешь именовать паки без префикса (параметр name=[])\n⁂ пока что все",
+			})
+		}
 		if err != nil {
 			slog.Error("Failed to send message to DM", slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID), slog.String("err", err.Error()))
 		}
@@ -392,265 +247,7 @@ const (
 	defaultEmojiIcon     = "⭐️"
 )
 
-func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-	//j, _ := json.MarshalIndent(update, "", "  ")
-	//fmt.Println(string(j))
-	fmt.Println(update.Message.From.ID, update.Message.From.Username)
-	var permissions types.Permissions
-	var err error
-	if update.Message.From.Username == "Channel_Bot" || update.Message.From.ID == 1087968824 {
-		var id int64
-		if update.Message.From.Username == "Channel_Bot" {
-			id = update.Message.SenderChat.ID
-		} else if update.Message.From.ID == 1087968824 {
-			id = update.Message.From.ID
-		}
-
-		permissions, err = db.Postgres.PermissionsByChannelID(ctx, id)
-		if err != nil {
-			slog.Error("Failed to get permissions by channel", slog.String("err", err.Error()))
-			d.sendMessageByBot(ctx, update, "Возникла внутреняя ошибка. Попробуйте позже")
-			return
-		}
-
-		if permissions.UseByChannelName && slices.Contains(permissions.ChannelIDs, update.Message.SenderChat.ID) {
-			update.Message.From.ID = permissions.UserID
-			update.Message.From.IsBot = false
-		} else {
-			d.sendMessageByBot(ctx, update, "Вы не можете создать пак от лица канала.")
-			return
-		}
-	} else {
-		permissions, err = db.Postgres.Permissions(ctx, update.Message.From.ID)
-		if err != nil {
-			slog.Error("Failed to get permissions", slog.String("err", err.Error()))
-			d.sendMessageByBot(ctx, update, "Возникла внутреняя ошибка. Попробуйте позже")
-			return
-		}
-	}
-
-	// Extract command arguments
-	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
-	emojiArgs, err := processing.ParseArgs(args)
-	if err != nil {
-		slog.Error("Invalid arguments", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, err.Error())
-		return
-	}
-
-	emojiArgs.Permissions = permissions
-
-	if update.Message.From.IsBot || update.Message.From.ID < 0 {
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Создать пак можно только с личного аккаунта")
-		return
-	}
-
-	// Setup command defaults and working environment
-	processing.SetupEmojiCommand(emojiArgs, update.Message.From.ID, update.Message.From.Username)
-
-	// Get bot info and setup pack details
-	botInfo, err := b.GetMe(ctx)
-	if err != nil {
-		slog.Error("Failed to get bot info", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось получить информацию о боте")
-		return
-	}
-
-	exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, botInfo.Username)
-	if err != nil {
-		slog.Error("Failed to check if user exists", slog.Int64("user_id", update.Message.From.ID), slog.String("err", err.Error()))
-		d.sendInitMessage(update.Message.Chat.ID, update.Message.ID)
-		return
-	}
-	if !exist {
-		d.sendInitMessage(update.Message.Chat.ID, update.Message.ID)
-		return
-	}
-
-	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, botInfo.Username)
-	if err != nil {
-		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "пак с подобной ссылкой не найден")
-		return
-	}
-
-	// Create working directory and download file
-	if err := d.prepareWorkingEnvironment(ctx, update, emojiArgs); err != nil {
-		d.handleDownloadError(ctx, update, err)
-		return
-	}
-
-	if emojiPack == nil {
-		// Create database record
-		emojiPack, err = d.createDatabaseRecord(ctx, emojiArgs, args, botInfo.Username)
-		if err != nil {
-			slog.Error("Failed to log emoji command",
-				slog.String("err", err.Error()),
-				slog.String("pack_link", emojiArgs.PackLink),
-				slog.Int64("user_id", emojiArgs.UserID))
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
-			return
-		}
-	}
-
-	var stickerSet *models.StickerSet
-	var emojiMetaRows [][]types.EmojiMeta
-
-	for {
-		// Обрабатываем видео
-		createdFiles, err := processing.ProcessVideo(emojiArgs)
-		if err != nil {
-			slog.LogAttrs(ctx, slog.LevelError, "Ошибка при обработке видео", emojiArgs.ToSlogAttributes(slog.String("err", err.Error()))...)
-			err2 := processing.RemoveDirectory(emojiArgs.WorkingDir)
-			if err2 != nil {
-				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
-			}
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
-			return
-		}
-
-		// Создаем набор стикеров
-		stickerSet, emojiMetaRows, err = d.AddEmojis(ctx, emojiArgs, createdFiles)
-		if err != nil {
-			if strings.Contains(err.Error(), "PEER_ID_INVALID") || strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "bot was blocked by the user") {
-				d.sendInitMessage(update.Message.Chat.ID, update.Message.ID)
-				// TODO implement later
-				//messagesToDelete.Store(update.Message.From.ID, update.Message.ID)
-				return
-
-			}
-
-			if strings.Contains(err.Error(), "STICKER_VIDEO_BIG") {
-				emojiArgs.QualityValue++
-				continue
-			}
-
-			if strings.Contains(err.Error(), "STICKERSET_INVALID") {
-				d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
-				return
-			}
-
-			if strings.Contains(err.Error(), "retry_after") {
-				parts := strings.Split(err.Error(), "retry_after ")
-				var waitTime int
-				if len(parts) >= 2 {
-					if wt, parseErr := strconv.Atoi(strings.TrimSpace(parts[1])); parseErr == nil {
-						waitTime = wt
-					}
-				}
-
-				if waitTime > 0 {
-					dur := time.Duration(waitTime * int(time.Second))
-					d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
-					return
-				}
-			}
-
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("%s", err.Error()))
-			return
-		}
-
-		break
-	}
-
-	// Обновляем количество эмодзи в базе данных
-	if err := db.Postgres.SetEmojiCount(ctx, emojiPack.ID, len(stickerSet.Stickers)); err != nil {
-		slog.Error("Failed to update emoji count",
-			slog.String("err", err.Error()),
-			slog.String("pack_link", emojiArgs.PackLink),
-			slog.Int64("user_id", emojiArgs.UserID))
-	}
-
-	// Создаем композицию эмодзи, используя метаданные из emojiMetaRows
-	// messageText := ""
-	// entities := make([]models.MessageEntity, 0, maxStickerInMessage)
-	// offset := 0
-
-	// Собираем все непрозрачные эмодзи
-	transparentCount := 0
-	newEmojis := make([]types.EmojiMeta, 0, types.MaxStickerInMessage)
-	for _, row := range emojiMetaRows {
-		for _, emoji := range row {
-			newEmojis = append(newEmojis, emoji)
-			if emoji.Transparent {
-				transparentCount++
-			}
-		}
-	}
-
-	// Выбираем нужные эмодзи
-	selectedEmojis := make([]types.EmojiMeta, 0, types.MaxStickerInMessage)
-	if emojiArgs.NewSet {
-		selectedEmojis = newEmojis
-	} else {
-		// Выбираем последние 100 эмодзи из пака
-		startIndex := len(stickerSet.Stickers) - types.MaxStickerInMessage
-		if startIndex < 0 {
-			startIndex = 0
-		}
-		for _, sticker := range stickerSet.Stickers[startIndex:] {
-			selectedEmojis = append(selectedEmojis, types.EmojiMeta{
-				FileID:      sticker.FileID,
-				DocumentID:  sticker.CustomEmojiID,
-				Transparent: false,
-			})
-		}
-	}
-
-	// Формируем сообщение из выбранных эмодзи
-	// currentRow := 0
-	// for i, emoji := range selectedEmojis {
-	// 	if emoji.Transparent {
-	// 		continue
-	// 	} else {
-	// 		// Добавляем эмодзи в текст сообщения
-	// 		messageText += "⭐️"
-
-	// 		// Добавляем ссылку на стикер в entities
-	// 		entities = append(entities, models.MessageEntity{
-	// 			Type:          models.MessageEntityTypeCustomEmoji,
-	// 			Offset:        offset,
-	// 			Length:        len("⭐️"),
-	// 			CustomEmojiID: emoji.DocumentID,
-	// 		})
-	// 		offset += len("⭐️")
-	// 	}
-
-	// 	newRow := (i + 1) / emojiArgs.Width
-	// 	if newRow != currentRow && i < len(selectedEmojis) {
-	// 		messageText += "\n"
-	// 		offset += 1
-	// 		currentRow = newRow
-	// 	}
-	// }
-
-	// Отправляем ссылку на пак
-
-	// Отправляем сообщение с эмодзи
-	//message := bot.SendMessageParams{
-	//	ChatID:          update.Message.Chat.ID,
-	//	MessageThreadID: update.Message.MessageThreadID,
-	//	Text:            messageText,
-	//	Entities:        entities,
-	//	ReplyParameters: &models.ReplyParameters{
-	//		MessageID: update.Message.ID,
-	//		ChatID:    update.Message.Chat.ID,
-	//	},
-	//}
-
-	var topicId string
-	if update.Message.MessageThreadID != 0 {
-		topicId = fmt.Sprintf("%d_%d", update.Message.Chat.ID, update.Message.MessageThreadID)
-	} else {
-		topicId = fmt.Sprintf("%d", update.Message.Chat.ID)
-	}
-	err = d.userBot.SendMessageWithEmojis(ctx, topicId, emojiArgs.Width, emojiArgs.PackLink, emojiArgs.RawInitCommand, selectedEmojis, update.Message.ID)
-	if err != nil {
-		slog.Error("Failed to send message with emojis", slog.String("err", err.Error()), slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID))
-	}
-}
-
-func (d *DripBot) sendInitMessage(chatID int64, msgID int) {
+func (d *DripBot) SendInitMessage(chatID int64, msgID int) {
 	inlineKeyboard := tgbotapi.NewInlineKeyboardButtonURL("/start", fmt.Sprintf("t.me/%s?start=start", d.tgbotApi.Self.UserName))
 	row := tgbotapi.NewInlineKeyboardRow(inlineKeyboard)
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
