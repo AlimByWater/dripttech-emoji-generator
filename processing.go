@@ -220,8 +220,6 @@ func worker(jobs <-chan tile, results chan<- processResult, wg *sync.WaitGroup) 
 	}
 }
 
-const outputDirTemplate = "/tmp/%s"
-
 func removeDirectory(directory string) error {
 	return os.RemoveAll(directory)
 }

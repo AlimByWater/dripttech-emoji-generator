@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"emoji-generator/db"
+	"emoji-generator/processing"
 	"emoji-generator/queue"
 	"emoji-generator/types"
 	"errors"
@@ -82,6 +83,10 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+func HandleEmojiCommandFromUserBotDM(ctx context.Context) {
+	//permissionsm
+}
+
 func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Update) {
 	permissions, err := db.Postgres.Permissions(ctx, update.Message.From.ID)
 	if err != nil {
@@ -96,7 +101,7 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 
 	// Extract command arguments
-	args := extractCommandArgs(update.Message)
+	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
 	emojiArgs, err := parseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
@@ -106,13 +111,8 @@ func handleEmojiCommandForDM(ctx context.Context, b *bot.Bot, update *models.Upd
 
 	emojiArgs.Permissions = permissions
 
-	if update.Message.From.IsBot || update.Message.From.ID < 0 {
-		sendMessageByBot(ctx, b, update, "Создать пак можно только с личного аккаунта")
-		return
-	}
-
 	// Setup command defaults and working environment
-	setupEmojiCommand(emojiArgs, update.Message)
+	processing.SetupEmojiCommand(emojiArgs, update.Message.From.ID, update.Message.From.Username)
 
 	// Get bot info and setup pack details
 	botInfo, err := b.GetMe(ctx)
@@ -322,10 +322,8 @@ func handleInfoCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
 }
 
 const (
-	defaultBackgroundSim   = "0.1"
-	defaultBackgroundBlend = "0.1"
-	defaultStickerFormat   = "video"
-	defaultEmojiIcon       = "⭐️"
+	defaultStickerFormat = "video"
+	defaultEmojiIcon     = "⭐️"
 )
 
 func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -350,7 +348,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 		}
 
 		if permissions.UseByChannelName && slices.Contains(permissions.ChannelIDs, update.Message.SenderChat.ID) {
-			update.Message.From.ID = 251636949
+			update.Message.From.ID = permissions.UserID
 			update.Message.From.IsBot = false
 		} else {
 			sendMessageByBot(ctx, b, update, "Вы не можете создать пак от лица канала.")
@@ -366,7 +364,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 
 	// Extract command arguments
-	args := extractCommandArgs(update.Message)
+	args := processing.ExtractCommandArgs(update.Message.Text, update.Message.Caption)
 	emojiArgs, err := parseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
@@ -382,7 +380,7 @@ func handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 
 	// Setup command defaults and working environment
-	setupEmojiCommand(emojiArgs, update.Message)
+	processing.SetupEmojiCommand(emojiArgs, update.Message.From.ID, update.Message.From.Username)
 
 	// Get bot info and setup pack details
 	botInfo, err := b.GetMe(ctx)
@@ -642,51 +640,6 @@ func sendErrorMessage(ctx context.Context, u *models.Update, chatID int64, errTo
 		slog.Error("Failed to send error message", slog.String("err", err.Error()))
 	}
 
-}
-
-func extractCommandArgs(msg *models.Message) string {
-	var args string
-	if strings.HasPrefix(msg.Text, "/emoji") {
-		args = strings.TrimPrefix(msg.Text, "/emoji")
-	} else if strings.HasPrefix(msg.Caption, "/emoji ") {
-		args = strings.TrimPrefix(msg.Caption, "/emoji ")
-	}
-	return strings.TrimSpace(args)
-}
-
-func setupEmojiCommand(args *types.EmojiCommand, msg *models.Message) {
-	// Set default values
-	if args.Width == 0 {
-		args.Width = types.DefaultWidth
-	}
-	if args.BackgroundSim == "" {
-		args.BackgroundSim = defaultBackgroundSim
-	}
-	if args.BackgroundBlend == "" {
-		args.BackgroundBlend = defaultBackgroundBlend
-	}
-
-	if args.SetName == "" {
-		args.SetName = strings.TrimSpace(types.PackTitleTempl)
-	} else {
-		if args.Permissions.PackNameWithoutPrefix {
-			args.SetName = strings.TrimSpace(args.SetName)
-		} else {
-			if len(args.SetName) > types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl) {
-				args.SetName = args.SetName[:types.TelegramPackLinkAndNameLength-len(types.PackTitleTempl)]
-			}
-			args.SetName = fmt.Sprintf(`%s
-%s`, args.SetName, types.PackTitleTempl)
-		}
-
-	}
-
-	// Setup working directory and user info
-	postfix := fmt.Sprintf("%d_%d", msg.From.ID, time.Now().Unix())
-	args.WorkingDir = fmt.Sprintf(outputDirTemplate, postfix)
-
-	args.UserID = msg.From.ID
-	args.UserName = msg.From.Username
 }
 
 func setupPackDetails(ctx context.Context, args *types.EmojiCommand, botInfo *models.User) (*db.EmojiPack, error) {
