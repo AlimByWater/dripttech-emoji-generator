@@ -194,6 +194,10 @@ func ColorToHex(colorName string) string {
 		return colorName
 	}
 
+	if strings.HasPrefix(colorName, "#") {
+		colorName = strings.Replace(colorName, "#", "0x", 1)
+	}
+
 	return "0x000000" // возвращаем черный по умолчанию
 }
 
