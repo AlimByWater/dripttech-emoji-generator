@@ -7,6 +7,7 @@ import (
 	"emoji-generator/db"
 	"emoji-generator/httpclient"
 	"emoji-generator/processing"
+	"emoji-generator/progress"
 	"emoji-generator/queue"
 	"emoji-generator/types"
 	"errors"
@@ -45,6 +46,7 @@ type DripBot struct {
 	wg               sync.WaitGroup
 	stickerQueue     *queue.StickerQueue
 	messagesToDelete sync.Map
+	progressManager  *progress.Manager
 }
 
 func NewDripBot(token string, userBot UserBot) (*DripBot, error) {
@@ -61,7 +63,7 @@ func NewDripBot(token string, userBot UserBot) (*DripBot, error) {
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			dbot.wg.Add(1)
 			defer dbot.wg.Done()
-			dbot.handler(ctx, b, update) // Using existing handler function for now
+			dbot.handler(ctx, b, update)
 		}),
 		bot.WithHTTPClient(time.Minute, c))
 	if err != nil {
@@ -77,6 +79,7 @@ func NewDripBot(token string, userBot UserBot) (*DripBot, error) {
 
 	dbot.bot = b
 	dbot.tgbotApi = tgbotApi
+	dbot.progressManager = progress.NewManager(b)
 
 	return dbot, nil
 }
@@ -336,6 +339,18 @@ func (d *DripBot) createDatabaseRecord(ctx context.Context, args *types.EmojiCom
 //create index idx_emoji_packs_pack_link on emoji_packs using btree (pack_link);
 //create index idx_emoji_packs_bot on emoji_packs using btree (bot_name);
 //
+
+func (d *DripBot) sendProgressMessage(ctx context.Context, chatID int64, replyToID int, status string) (*progress.Message, error) {
+	return d.progressManager.SendMessage(ctx, chatID, replyToID, status)
+}
+
+func (d *DripBot) deleteProgressMessage(ctx context.Context, chatID int64, msgID int) error {
+	return d.progressManager.DeleteMessage(ctx, chatID, msgID)
+}
+
+func (d *DripBot) updateProgressMessage(ctx context.Context, chatID int64, msgID int, status string) error {
+	return d.progressManager.UpdateMessage(ctx, chatID, msgID, status)
+}
 
 func (d *DripBot) createBlankDatabaseRecord(ctx context.Context, botName string, userID int64) error {
 	emojiPack := db.EmojiPack{

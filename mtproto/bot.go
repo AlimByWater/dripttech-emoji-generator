@@ -4,6 +4,12 @@ import (
 	"context"
 	"emoji-generator/types"
 	"fmt"
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"sync"
+
 	"github.com/celestix/gotgproto"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/dispatcher/handlers/filters"
@@ -15,11 +21,6 @@ import (
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/tg"
-	"log/slog"
-	"math"
-	"os"
-	"strconv"
-	"sync"
 )
 
 type AddEmojier interface {
@@ -33,6 +34,7 @@ type User struct {
 	accessHash           sync.Map
 	chatIdsToInternalIds sync.Map
 	lastAccessHash       int64
+	progressMessages     sync.Map
 }
 
 func NewBot() *User {

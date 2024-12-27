@@ -6,19 +6,20 @@ import (
 	"emoji-generator/processing"
 	"emoji-generator/types"
 	"fmt"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
 	//j, _ := json.MarshalIndent(update, "", "  ")
 	//fmt.Println(string(j))
-	fmt.Println(update.Message.From.ID, update.Message.From.Username)
+	var progressMsgID int
 	var permissions types.Permissions
 	var err error
 	if update.Message.From.Username == "Channel_Bot" || update.Message.From.ID == 1087968824 {
@@ -114,12 +115,29 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
 			return
 		}
+
+		// Отправляем первое сообщение с прогрессом
+		progress, err := d.sendProgressMessage(ctx, update.Message.Chat.ID, update.Message.ID, "⏳ Начинаем создание эмодзи-пака...")
+		if err != nil {
+			slog.Error("Failed to send initial progress message",
+				slog.String("err", err.Error()),
+				slog.Int64("user_id", emojiArgs.UserID))
+		}
+
+		progressMsgID = progress.MessageID
+		defer d.deleteProgressMessage(ctx, update.Message.Chat.ID, progressMsgID)
 	}
 
 	var stickerSet *models.StickerSet
 	var emojiMetaRows [][]types.EmojiMeta
 
 	for {
+		// Обновляем статус: начало обработки видео
+		err = d.updateProgressMessage(ctx, update.Message.Chat.ID, progressMsgID, "🎬 Обрабатываем видео...")
+		if err != nil {
+			slog.Error("Failed to update progress message", slog.String("err", err.Error()))
+		}
+
 		// Обрабатываем видео
 		createdFiles, err := processing.ProcessVideo(emojiArgs)
 		if err != nil {
@@ -132,6 +150,12 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			return
 		}
 
+		// Обновляем статус: создание стикеров
+		err = d.updateProgressMessage(ctx, update.Message.Chat.ID, progressMsgID, "✨ Создаем эмодзи...")
+		if err != nil {
+			slog.Error("Failed to update progress message", slog.String("err", err.Error()))
+		}
+
 		// Создаем набор стикеров
 		stickerSet, emojiMetaRows, err = d.AddEmojis(ctx, emojiArgs, createdFiles)
 		if err != nil {
@@ -140,10 +164,10 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 				// TODO implement later
 				//messagesToDelete.Store(update.Message.From.ID, update.Message.ID)
 				return
-
 			}
 
 			if strings.Contains(err.Error(), "STICKER_VIDEO_BIG") {
+				_ = d.updateProgressMessage(ctx, update.Message.Chat.ID, progressMsgID, "🔄 Оптимизируем размер видео...")
 				emojiArgs.QualityValue++
 				continue
 			}
@@ -182,6 +206,12 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			slog.String("err", err.Error()),
 			slog.String("pack_link", emojiArgs.PackLink),
 			slog.Int64("user_id", emojiArgs.UserID))
+	}
+
+	// Обновляем статус: генерация композиции
+	err = d.updateProgressMessage(ctx, update.Message.Chat.ID, progressMsgID, "🎨 Генерируем эмодзи-композицию...")
+	if err != nil {
+		slog.Error("Failed to update progress message", slog.String("err", err.Error()))
 	}
 
 	// Создаем композицию эмодзи, используя метаданные из emojiMetaRows

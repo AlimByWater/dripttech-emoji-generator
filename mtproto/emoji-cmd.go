@@ -6,17 +6,20 @@ import (
 	"emoji-generator/processing"
 	"emoji-generator/types"
 	"fmt"
-	"github.com/celestix/gotgproto/ext"
-	"github.com/go-telegram/bot/models"
-	"github.com/gotd/td/telegram/message"
-	"github.com/gotd/td/tg"
 	"log/slog"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/celestix/gotgproto/ext"
+	"github.com/go-telegram/bot/models"
+	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/tg"
 )
 
 func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
+	var progressMsgID int
+
 	if !update.EffectiveChat().IsAUser() {
 		return nil
 	}
@@ -45,13 +48,20 @@ func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
 		return err
 	}
 
+	// Create progress message
+	progressMsgID = u.CreateProgressMessage(ctx, update.EffectiveChat().GetID(), update.EffectiveMessage.GetID(), "Начинаем обработку...")
+	defer u.DeleteProgressMessage(ctx, update.EffectiveChat().GetID(), progressMsgID)
+
 	emojiArgs.Permissions = permissions
 
 	// Setup command defaults and working environment
 	processing.SetupEmojiCommand(emojiArgs, update.EffectiveChat().GetID(), update.GetUserChat().Username)
 
+	// Update progress message
+	u.UpdateProgressMessage(ctx, update.EffectiveChat().GetID(), progressMsgID, "Подготовка данных...")
+
 	// ++++++++ CHOOSE ACTUAL BOT TO CREATE STICKERS ++++++++
-	dripBot := bots.Manager.GetBotByUsername(bots.GetMainBotUsername())
+	dripBot := u.chooseBot(emojiArgs)
 	// ++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, dripBot.BotUserName())
@@ -97,6 +107,8 @@ func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
 	var emojiMetaRows [][]types.EmojiMeta
 
 	for {
+
+		u.UpdateProgressMessage(ctx, update.EffectiveChat().GetID(), progressMsgID, "Обрабатываем видео...")
 		// Обрабатываем видео
 		createdFiles, err := processing.ProcessVideo(emojiArgs)
 		if err != nil {
@@ -109,6 +121,7 @@ func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
 			return err
 		}
 
+		u.UpdateProgressMessage(ctx, update.EffectiveChat().GetID(), progressMsgID, "Создаем эмодзи пак...")
 		// Создаем набор стикеров
 		stickerSet, emojiMetaRows, err = dripBot.AddEmojis(ctx, emojiArgs, createdFiles)
 		if err != nil {
@@ -152,7 +165,6 @@ func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
 
 		break
 	}
-
 	// Обновляем количество эмодзи в базе данных
 	if err := db.Postgres.SetEmojiCount(ctx, emojiPack.ID, len(stickerSet.Stickers)); err != nil {
 		slog.Error("Failed to update emoji count",
@@ -161,6 +173,7 @@ func (u *User) emoji(ctx *ext.Context, update *ext.Update) error {
 			slog.Int64("user_id", emojiArgs.UserID))
 	}
 
+	u.UpdateProgressMessage(ctx, update.EffectiveChat().GetID(), progressMsgID, "Генерируем эмодзи-композицию...")
 	selectedEmojis := processing.GenerateEmojiMessage(emojiMetaRows, stickerSet, emojiArgs)
 	err = u.sendMessageWithEmojisInDM(ctx, update, emojiArgs.Width, emojiArgs.PackLink, selectedEmojis)
 	if err != nil {
@@ -204,4 +217,21 @@ func (u *User) prepareWorkingEnvironment(ctx *ext.Context, update *ext.Update, a
 
 	args.DownloadedFile = fileName
 	return nil
+}
+
+func (u *User) chooseBot(emojiArgs *types.EmojiCommand) *bots.DripBot {
+	var dripBot *bots.DripBot
+	if emojiArgs.PackLink == "" {
+		dripBot = bots.Manager.GetBotByUsername(types.VIP_BOT_USERNAME)
+	} else {
+		if strings.Contains(emojiArgs.PackLink, types.VIP_BOT_USERNAME) {
+			dripBot = bots.Manager.GetBotByUsername(types.VIP_BOT_USERNAME)
+		} else if strings.Contains(emojiArgs.PackLink, types.BOT_USERNAME) {
+			dripBot = bots.Manager.GetBotByUsername(types.BOT_USERNAME)
+		} else if strings.Contains(emojiArgs.PackLink, types.TEST_BOT_USERNAME) {
+			dripBot = bots.Manager.GetBotByUsername(types.TEST_BOT_USERNAME)
+		}
+	}
+
+	return dripBot
 }
