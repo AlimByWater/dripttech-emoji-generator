@@ -185,6 +185,7 @@ func ColorToHex(colorName string) string {
 	if colorName == "" {
 		return ""
 	}
+	colorName = strings.ToLower(colorName)
 	if hex, exists := types.ColorMap[strings.ToLower(colorName)]; exists {
 		return hex
 	}
