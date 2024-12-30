@@ -35,7 +35,9 @@ func (d *DripBot) onPackSelect(ctx context.Context, b *bot.Bot, update *models.U
 	}()
 
 	kb := inline.New(d.bot).
-		Row().Button("Удалить пак", []byte(update.Message.Text), d.onPackDelete)
+		Row().
+		Button("Мои паки", []byte("packs"), d.onRemovePacksSelect).
+		Button("Удалить пак", []byte(update.Message.Text), d.onPackDelete)
 
 	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      update.Message.Chat.ID,
@@ -62,12 +64,16 @@ func (d *DripBot) onPackDelete(ctx context.Context, b *bot.Bot, mes models.Maybe
 		Name: string(data),
 	})
 	if err != nil {
-		slog.Error("delete sticker set", slog.String("err", err.Error()), slog.String("name", string(data)), slog.String("username", mes.Message.Chat.Username), slog.Int64("user_id", mes.Message.From.ID))
 		//err = db.Postgres.UnsetDeletedPack(ctx, string(data))
 		if strings.Contains(err.Error(), "STICKERSET_INVALID") && strings.Contains(string(data), d.tgbotApi.Self.UserName) {
 			d.sendMessageByBot(ctx, mes.Message.Chat.ID, 0, "Похоже пак уже удален.", d.startKeyboard(ctx))
+			err = db.Postgres.SetDeletedPack(ctx, string(data))
+			if err != nil {
+				slog.Error("set delete emoji pack", slog.String("err", err.Error()), slog.String("link", string(data)), slog.String("username", mes.Message.Chat.Username), slog.Int64("user_id", mes.Message.From.ID))
+			}
 			return
 		}
+		slog.Error("delete sticker set", slog.String("err", err.Error()), slog.String("name", string(data)), slog.String("username", mes.Message.Chat.Username), slog.Int64("user_id", mes.Message.From.ID))
 		d.sendMessageByBot(ctx, mes.Message.Chat.ID, 0, "Не удалось удалить пак. Попробуйте позже", nil)
 		return
 	}
