@@ -3,15 +3,14 @@ package bots
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"emoji-generator/db"
 	"emoji-generator/httpclient"
 	"emoji-generator/processing"
 	"emoji-generator/progress"
 	"emoji-generator/queue"
 	"emoji-generator/types"
-	"errors"
 	"fmt"
+	"github.com/cavaliergopher/grab/v3"
 	"log/slog"
 	"os"
 	"slices"
@@ -24,13 +23,13 @@ import (
 
 	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 
-	"github.com/cavaliergopher/grab/v3"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
 var (
-	validchatIDs = []string{"-1002400904088_3", "-1002491830452_3", "-1002002718381"}
+	validchatIDs            = []string{"-1002400904088_3", "-1002491830452_3", "-1002002718381"}
+	packDeletePrefixMessage = "pack_delete:"
 )
 
 type UserBot interface {
@@ -159,92 +158,6 @@ func (d *DripBot) handler(ctx context.Context, b *bot.Bot, update *models.Update
 	}
 }
 
-func (d *DripBot) handleStartCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-
-	if update.Message.Chat.Type == models.ChatTypePrivate {
-		exist, err := db.Postgres.UserExists(ctx, update.Message.From.ID, d.tgbotApi.Self.UserName)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("Failed to check if user exists", slog.String("err", err.Error()))
-			_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   "Возникла ошибка при получении информации из БД. Попробуйте позже",
-			})
-			slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
-			return
-		}
-
-		if !exist {
-			err = d.createBlankDatabaseRecord(ctx, d.tgbotApi.Self.UserName, update.Message.From.ID)
-			if err != nil {
-				slog.Error("Failed to create blank database record", slog.String("err", err.Error()))
-				_, err2 := b.SendMessage(ctx, &bot.SendMessageParams{
-					ChatID: update.Message.Chat.ID,
-					Text:   "Возникла ошибка при создании базы данных",
-				})
-				slog.Error("Failed to send message to DM", slog.String("err", err2.Error()), slog.Int64("user_id", update.Message.From.ID))
-				return
-			}
-
-			// delete message
-			msgID, ok := d.messagesToDelete.LoadAndDelete(update.Message.From.ID)
-			if ok {
-				for i := range validchatIDs {
-					deleted, _ := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: validchatIDs[i], MessageID: msgID.(int)})
-					if deleted {
-						break
-					}
-				}
-			}
-		}
-
-		if d.tgbotApi.Self.UserName == types.BOT_USERNAME || d.tgbotApi.Self.UserName == types.TEST_BOT_USERNAME {
-			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   "Можешь делать паки",
-			})
-
-		} else if d.tgbotApi.Self.UserName == types.VIP_BOT_USERNAME {
-			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   "Добро пожаловать на сервер.\nЯ ⁂VIP бот, а это значит:\n ⁂ Твои запросы обрабатываются вне очереди\n ⁂ Ты можешь получать готовые эмодзи-композиции в ЛС\n ⁂ Ты можешь именовать паки без префикса (параметр name=[])\n⁂ пока что все",
-			})
-		}
-		if err != nil {
-			slog.Error("Failed to send message to DM", slog.String("username", update.Message.From.Username), slog.Int64("user_id", update.Message.From.ID), slog.String("err", err.Error()))
-		}
-	}
-}
-
-func (d *DripBot) handleInfoCommand(ctx context.Context, b *bot.Bot, update *models.Update) {
-
-	infoText := `🤖 Бот для создания эмодзи-паков из картинок/видео/GIF
-
-Отправьте медиафайл с командой /emoji и опциональными параметрами в формате param=[value]:
-
-Параметры:
-• width=[N] или w=[N] - ширина нарезки (по умолчанию 8). Чем меньше ширина, тем крупнее эмодзи
-• background=[цвет] или b=[цвет] - цвет фона, который будет вырезан из изображения. Поддерживаются:
-  - HEX формат: b=[0x00FF00]
-  - Названия: b=[black], b=[white], b=[pink], b=[green]
-• b_sim=[число] - порог схожести цвета с фоном (0-1, по умолчанию 0.1)
-• b_blend=[число] - использовать смешивание цветов для удаления фона (0-1, по умолчанию 0.1)
-• link=[ссылка] или l=[ссылка] - добавить эмодзи в существующий пак (должен быть создан вами)
-• iphone=[true] или i=[true] - оптимизация размера под iPhone`
-
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ReplyParameters: &models.ReplyParameters{
-
-			MessageID: update.Message.ID,
-			ChatID:    update.Message.Chat.ID,
-		},
-		ChatID: update.Message.Chat.ID,
-		Text:   infoText,
-	})
-	if err != nil {
-		slog.Error("Failed to send info message", slog.String("err", err.Error()))
-	}
-}
-
 const (
 	defaultStickerFormat = "video"
 	defaultEmojiIcon     = "⭐️"
@@ -268,37 +181,44 @@ func (d *DripBot) SendInitMessage(chatID int64, msgID int) {
 	}
 }
 
-func (d *DripBot) sendMessageByBot(ctx context.Context, u *models.Update, msgToSend string) {
+func (d *DripBot) sendMessageByBot(ctx context.Context, chatID int64, replyTo int, msgToSend string, keyboard models.ReplyMarkup) {
 	params := &bot.SendMessageParams{
-		ReplyParameters: &models.ReplyParameters{
-			MessageID: u.Message.ID,
-			ChatID:    u.Message.Chat.ID,
-		},
-		ChatID: u.Message.Chat.ID,
-		Text:   fmt.Sprintf("%s", msgToSend),
+		ChatID:      chatID,
+		Text:        fmt.Sprintf("%s", msgToSend),
+		ReplyMarkup: d.menuButtons(ctx),
+	}
+
+	if replyTo != 0 {
+		params.ReplyParameters = &models.ReplyParameters{
+			MessageID: replyTo,
+			ChatID:    chatID,
+		}
 	}
 
 	_, err := d.bot.SendMessage(ctx, params)
 	if err != nil {
-		slog.Error("Failed to send error message", slog.String("err", err.Error()), slog.String("username", u.Message.From.Username), slog.Int64("user_id", u.Message.From.ID))
+		slog.Error("Failed to send error message", slog.String("err", err.Error()), slog.Int64("user_id", chatID))
 	}
 	return
 }
 
-func (d *DripBot) sendErrorMessage(ctx context.Context, u *models.Update, chatID int64, errToSend string) {
+func (d *DripBot) sendErrorMessage(ctx context.Context, chatID int64, replyTo int, threadID int, errToSend string) {
 	params := bot.SendMessageParams{
-		ReplyParameters: &models.ReplyParameters{
-			MessageID: u.Message.ID,
-			ChatID:    u.Message.Chat.ID,
-		},
 		ChatID: chatID,
 		Text:   fmt.Sprintf("%s", errToSend),
 	}
+
+	if replyTo != 0 {
+		params.ReplyParameters = &models.ReplyParameters{
+			MessageID: replyTo,
+			ChatID:    chatID,
+		}
+	}
 	//_, err := b.SendMessage(ctx, params)
 
-	chat := fmt.Sprintf("%d", u.Message.Chat.ID)
-	if u.Message.MessageThreadID != 0 {
-		chat = fmt.Sprintf("%s_%d", chat, u.Message.MessageThreadID)
+	chat := fmt.Sprintf("%d", chatID)
+	if threadID != 0 {
+		chat = fmt.Sprintf("%s_%d", chat, threadID)
 	}
 
 	err := d.userBot.SendMessage(ctx, chat, params)
@@ -316,6 +236,7 @@ func (d *DripBot) createDatabaseRecord(ctx context.Context, args *types.EmojiCom
 		InitialCommand: &initialCommand,
 		BotName:        botUsername,
 		EmojiCount:     0,
+		TelegramFileID: args.File.FileID,
 	}
 	return db.Postgres.LogEmojiCommand(ctx, emojiPack)
 }
@@ -396,7 +317,7 @@ func (d *DripBot) handleDownloadError(ctx context.Context, update *models.Update
 	default:
 		message = "Ошибка при загрузке файла"
 	}
-	d.sendErrorMessage(ctx, update, update.Message.Chat.ID, message)
+	d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, message)
 }
 
 func (d *DripBot) downloadFile(ctx context.Context, m *models.Message, args *types.EmojiCommand) (string, error) {

@@ -58,60 +58,6 @@ func (p *postgres) Shutdown() error {
 	return nil
 }
 
-// CreateEmojiPack creates a new emoji pack record
-func (p *postgres) CreateEmojiPack(ctx context.Context, pack *EmojiPack) (*EmojiPack, error) {
-	query := `
-INSERT INTO emoji_packs (
-creator_id, pack_name, file_url, pack_link, initial_command, bot_name, emoji_count
-) VALUES (
-$1, $2, $3, $4, $5, $6, $7
-) RETURNING id, created_at, updated_at`
-
-	err := p.db.QueryRowContext(ctx, query, pack.CreatorID, pack.PackName, pack.FileURL, pack.PackLink, pack.InitialCommand, pack.BotName, pack.EmojiCount).
-		Scan(&pack.ID, &pack.CreatedAt, &pack.UpdatedAt)
-	if err != nil {
-		return pack, fmt.Errorf("failed to create emoji pack: %w", err)
-	}
-
-	return pack, nil
-}
-
-// GetEmojiPackByID retrieves an emoji pack by its ID
-func (p *postgres) GetEmojiPackByID(ctx context.Context, id int64) (*EmojiPack, error) {
-	var pack EmojiPack
-	query := `SELECT * FROM emoji_packs WHERE id = $1`
-
-	if err := p.db.GetContext(ctx, &pack, query, id); err != nil {
-		return nil, fmt.Errorf("failed to get emoji pack: %w", err)
-	}
-
-	return &pack, nil
-}
-
-// GetEmojiPacksByCreator retrieves all emoji packs created by a specific user
-func (p *postgres) GetEmojiPacksByCreator(ctx context.Context, creatorID int64) ([]*EmojiPack, error) {
-	var packs []*EmojiPack
-	query := `SELECT * FROM emoji_packs WHERE creator_id = $1 ORDER BY created_at DESC`
-
-	if err := p.db.SelectContext(ctx, &packs, query, creatorID); err != nil {
-		return nil, fmt.Errorf("failed to get emoji packs by creator: %w", err)
-	}
-
-	return packs, nil
-}
-
-// GetEmojiPackByPackLink retrieves an emoji pack by its pack link
-func (p *postgres) GetEmojiPackByPackLink(ctx context.Context, packLink string) (*EmojiPack, error) {
-	var pack EmojiPack
-	query := `SELECT * FROM emoji_packs WHERE pack_link = $1`
-
-	if err := p.db.GetContext(ctx, &pack, query, packLink); err != nil {
-		return nil, fmt.Errorf("failed to get emoji pack by pack link: %w", err)
-	}
-
-	return &pack, nil
-}
-
 func (p *postgres) GetBotByID(ctx context.Context, id int64) (*Bot, error) {
 	var bot Bot
 	query := `SELECT * FROM bots WHERE id = $1`

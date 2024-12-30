@@ -33,7 +33,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 		permissions, err = db.Postgres.PermissionsByChannelID(ctx, id)
 		if err != nil {
 			slog.Error("Failed to get permissions by channel", slog.String("err", err.Error()))
-			d.sendMessageByBot(ctx, update, "Возникла внутреняя ошибка. Попробуйте позже")
+			d.sendMessageByBot(ctx, update.Message.Chat.ID, update.Message.ID, "Возникла внутреняя ошибка. Попробуйте позже", nil)
 			return
 		}
 
@@ -41,14 +41,14 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			update.Message.From.ID = permissions.UserID
 			update.Message.From.IsBot = false
 		} else {
-			d.sendMessageByBot(ctx, update, "Вы не можете создать пак от лица канала.")
+			d.sendMessageByBot(ctx, update.Message.Chat.ID, update.Message.ID, "Вы не можете создать пак от лица канала.", nil)
 			return
 		}
 	} else {
 		permissions, err = db.Postgres.Permissions(ctx, update.Message.From.ID)
 		if err != nil {
 			slog.Error("Failed to get permissions", slog.String("err", err.Error()))
-			d.sendMessageByBot(ctx, update, "Возникла внутреняя ошибка. Попробуйте позже")
+			d.sendMessageByBot(ctx, update.Message.Chat.ID, update.Message.ID, "Возникла внутреняя ошибка. Попробуйте позже", nil)
 			return
 		}
 	}
@@ -58,14 +58,14 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 	emojiArgs, err := processing.ParseArgs(args)
 	if err != nil {
 		slog.Error("Invalid arguments", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, err.Error())
+		d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, err.Error())
 		return
 	}
 
 	emojiArgs.Permissions = permissions
 
 	if update.Message.From.IsBot || update.Message.From.ID < 0 {
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Создать пак можно только с личного аккаунта")
+		d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, "Создать пак можно только с личного аккаунта")
 		return
 	}
 
@@ -76,7 +76,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 	botInfo, err := b.GetMe(ctx)
 	if err != nil {
 		slog.Error("Failed to get bot info", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось получить информацию о боте")
+		d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, "Не удалось получить информацию о боте")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 	emojiPack, err := processing.SetupPackDetails(ctx, emojiArgs, botInfo.Username)
 	if err != nil {
 		slog.Error("Failed to setup pack details", slog.String("err", err.Error()))
-		d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "пак с подобной ссылкой не найден")
+		d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, "пак с подобной ссылкой не найден")
 		return
 	}
 
@@ -112,7 +112,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 				slog.String("err", err.Error()),
 				slog.String("pack_link", emojiArgs.PackLink),
 				slog.Int64("user_id", emojiArgs.UserID))
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, "Не удалось создать запись в базе данных")
+			d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, "Не удалось создать запись в базе данных")
 			return
 		}
 
@@ -146,7 +146,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			if err2 != nil {
 				slog.Error("Failed to remove directory", slog.String("err", err2.Error()), slog.String("dir", emojiArgs.WorkingDir), slog.String("emojiPackLink", emojiArgs.PackLink), slog.Int64("user_id", emojiArgs.UserID))
 			}
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
+			d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, fmt.Sprintf("Ошибка при обработке видео: %s", err.Error()))
 			return
 		}
 
@@ -173,7 +173,7 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 			}
 
 			if strings.Contains(err.Error(), "STICKERSET_INVALID") {
-				d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
+				d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, fmt.Sprintf("Не получилось создать некоторые эмодзи. Попробуйте еще раз, либо измените файл."))
 				return
 			}
 
@@ -188,12 +188,12 @@ func (d *DripBot) handleEmojiCommand(ctx context.Context, b *bot.Bot, update *mo
 
 				if waitTime > 0 {
 					dur := time.Duration(waitTime * int(time.Second))
-					d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
+					d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, fmt.Sprintf("Вы сможете создать пак только через %.0f минуты", dur.Minutes()))
 					return
 				}
 			}
 
-			d.sendErrorMessage(ctx, update, update.Message.Chat.ID, fmt.Sprintf("%s", err.Error()))
+			d.sendErrorMessage(ctx, update.Message.Chat.ID, update.Message.ID, update.Message.MessageThreadID, fmt.Sprintf("%s", err.Error()))
 			return
 		}
 
