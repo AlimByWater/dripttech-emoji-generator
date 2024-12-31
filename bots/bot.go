@@ -353,6 +353,13 @@ func (d *DripBot) downloadFile(ctx context.Context, m *models.Message, args *typ
 		} else if m.ReplyToMessage.Document != nil {
 			fileID = m.ReplyToMessage.Document.FileID
 			mimeType = m.ReplyToMessage.Document.MimeType
+		} else if m.ReplyToMessage.Sticker != nil && m.ReplyToMessage.Sticker.Type == "regular" {
+			fileID = m.ReplyToMessage.Sticker.FileID
+			if m.ReplyToMessage.Sticker.IsVideo {
+				mimeType = "video/webm"
+			} else if !m.ReplyToMessage.Sticker.IsAnimated {
+				mimeType = "image/webp"
+			}
 		}
 		exist = true
 	}
