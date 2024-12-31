@@ -57,27 +57,27 @@ var (
 )
 
 type EmojiCommand struct {
-	UserName string
+	UserName string `json:"user_name"`
 
-	SetName         string
-	PackLink        string
-	Width           int
-	BackgroundColor string
-	BackgroundBlend string
-	BackgroundSim   string
-	UserID          int64
-	DownloadedFile  string
-	File            *models.File
+	SetName         string       `json:"set_name"`
+	PackLink        string       `json:"pack_link"`
+	Width           int          `json:"width"`
+	BackgroundColor string       `json:"background_color"`
+	BackgroundBlend string       `json:"background_blend"`
+	BackgroundSim   string       `json:"background_sim"`
+	UserID          int64        `json:"user_id"`
+	DownloadedFile  string       `json:"downloaded_file"`
+	File            *models.File `json:"file"`
 
-	QualityValue int
+	QualityValue int `json:"quality_value"`
 
-	RawInitCommand string
-	Iphone         bool
+	RawInitCommand string `json:"raw_init_command"`
+	Iphone         bool   `json:"iphone"`
 
-	WorkingDir string
+	WorkingDir string `json:"working_dir"`
 
-	NewSet      bool
-	Permissions Permissions
+	NewSet      bool        `json:"new_set"`
+	Permissions Permissions `json:"permissions"`
 }
 
 func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {
@@ -122,10 +122,12 @@ var ArgAlias = map[string]string{
 	"background_blend": "background_blend",
 	"bb":               "background_blend",
 	"b_blend":          "background_blend",
+	"bblend":           "background_blend",
 
 	"background_sim": "background_sim",
 	"bs":             "background_sim",
 	"b_sim":          "background_sim",
+	"bsim":           "background_sim",
 
 	// link aliases
 	"link":   "link",

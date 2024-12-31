@@ -107,6 +107,8 @@ func ParseArgs(arg string) (*types.EmojiCommand, error) {
 	currentArg := ""
 	inBrackets := false
 
+	arg = strings.ReplaceAll(arg, "\n", " ")
+
 	// Проходим по строке посимвольно для корректной обработки значений в скобках
 	for i := 0; i < len(arg); i++ {
 		switch arg[i] {
