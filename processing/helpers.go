@@ -187,7 +187,7 @@ func ColorToHex(colorName string) string {
 	if colorName == "" {
 		return ""
 	}
-	colorName = strings.ToLower(colorName)
+
 	if hex, exists := types.ColorMap[strings.ToLower(colorName)]; exists {
 		return hex
 	}
@@ -197,12 +197,21 @@ func ColorToHex(colorName string) string {
 		return colorName
 	}
 
+	if strings.HasPrefix(colorName, "0X") {
+		colorName = strings.Replace(colorName, "0X", "0x", 1)
+		return colorName
+	}
+
 	if strings.HasPrefix(colorName, "#") {
 		colorName = strings.Replace(colorName, "#", "0x", 1)
+		return colorName
 	}
+
+	fmt.Println(colorName)
 
 	if !strings.HasPrefix(colorName, "0x") && !strings.HasPrefix(colorName, "#") {
 		colorName = "0x" + colorName
+		return colorName
 	}
 
 	return "0x000000" // возвращаем черный по умолчанию

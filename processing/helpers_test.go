@@ -14,7 +14,7 @@ func TestHelpers_ColorToHex(t *testing.T) {
 
 func TestHelpers_ParseArgs(t *testing.T) {
 	args := `w=[1] iphone=[true]
-b=black`
+b=0XFFFFFF`
 
 	emojiArgs, err := ParseArgs(args)
 	if err != nil {
