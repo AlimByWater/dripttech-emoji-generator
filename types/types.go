@@ -80,6 +80,11 @@ type EmojiCommand struct {
 	Permissions Permissions `json:"permissions"`
 }
 
+func (e *EmojiCommand) SetDefault() {
+	e.Width = DefaultWidth
+	e.NewSet = true
+}
+
 func (e *EmojiCommand) ToSlogAttributes(attrs ...slog.Attr) []slog.Attr {
 	a := []slog.Attr{
 		slog.Int64("user_id", e.UserID),

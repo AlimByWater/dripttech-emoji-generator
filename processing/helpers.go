@@ -100,6 +100,7 @@ func ParseArgs(arg string) (*types.EmojiCommand, error) {
 	emojiArgs.RawInitCommand = "/emoji " + arg
 
 	if arg == "" {
+		emojiArgs.SetDefault()
 		return &emojiArgs, nil
 	}
 
